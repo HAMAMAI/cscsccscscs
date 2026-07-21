@@ -41,6 +41,7 @@ services:
     volumes:
       - ./generated/Caddyfile:/etc/caddy/Caddyfile:ro
       - /etc/letsencrypt:/certs:ro
+      - /opt/takt/downloads:/srv/downloads:ro
     depends_on:
       livekit:
         condition: service_started

@@ -12,6 +12,12 @@ https://${CALL_DOMAIN} {
   handle /health {
     reverse_proxy 127.0.0.1:7890
   }
+  handle_path /downloads/* {
+    root * /srv/downloads
+    header Content-Disposition "attachment; filename=takt-android.apk"
+    header Cache-Control "public, max-age=3600"
+    file_server
+  }
   handle {
     reverse_proxy 127.0.0.1:7880
   }
