@@ -22,11 +22,10 @@ done
 
 install -d -m 700 generated
 envsubst < livekit.template.yaml > generated/livekit.yaml
-envsubst < haproxy.template.cfg > generated/haproxy.cfg
 envsubst < Caddyfile.template > generated/Caddyfile
 chmod 600 generated/livekit.yaml
 
 docker compose config --quiet
 docker compose pull
-docker compose up -d
+docker compose up -d --remove-orphans --force-recreate
 docker compose ps
