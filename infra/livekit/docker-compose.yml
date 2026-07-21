@@ -52,6 +52,7 @@ services:
     container_name: takt-call-gateway
     restart: unless-stopped
     network_mode: host
+    user: "0:0"
     cap_add:
       - NET_BIND_SERVICE
     volumes:
