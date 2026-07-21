@@ -13,7 +13,7 @@
 - UDP `443`, `50000:50100`;
 - SSH только с доверенных адресов, если это возможно.
 
-Проверенный Android APK раздаётся Caddy по `/downloads/takt-android.apk` с поддержкой докачки HTTP Range.
+Проверенный Android APK раздаётся Caddy по `/downloads/takt-android.apk` с поддержкой докачки HTTP Range. Для браузеров, блокирующих прямые APK, там же доступен ZIP-архив `/downloads/takt-android.zip`.
 
 Секреты хранятся только в `infra/livekit/.env` на сервере и в зашифрованных секретах GitHub Actions. Файл `.env` и сгенерированные конфигурации не коммитятся.
 

@@ -68,10 +68,13 @@ jobs:
             "https://github.com/HAMAMAI/cscsccscscs/releases/download/v2.0.0-beta.3/takt-android.apk"
           echo "$expected_sha  /tmp/takt-android.apk" | sha256sum --check
           test "$(stat --format=%s /tmp/takt-android.apk)" -eq 68980963
+          zip --junk-paths --quiet /tmp/takt-android.zip /tmp/takt-android.apk
+          unzip -t /tmp/takt-android.zip
           ssh "$VPS_USER@$VPS_HOST" 'install -d -m 755 /opt/takt/downloads'
           scp /tmp/takt-android.apk "$VPS_USER@$VPS_HOST:/opt/takt/downloads/takt-android.apk.upload"
+          scp /tmp/takt-android.zip "$VPS_USER@$VPS_HOST:/opt/takt/downloads/takt-android.zip.upload"
           ssh "$VPS_USER@$VPS_HOST" \
-            'mv /opt/takt/downloads/takt-android.apk.upload /opt/takt/downloads/takt-android.apk && chmod 644 /opt/takt/downloads/takt-android.apk'
+            'mv /opt/takt/downloads/takt-android.apk.upload /opt/takt/downloads/takt-android.apk && mv /opt/takt/downloads/takt-android.zip.upload /opt/takt/downloads/takt-android.zip && chmod 644 /opt/takt/downloads/takt-android.apk /opt/takt/downloads/takt-android.zip'
 
       - name: Install and start LiveKit with TURN
         env:
@@ -101,5 +104,8 @@ jobs:
           echo "f9d8b88c11a4664f39be23b1e3132bbf86c915fd16de86e5e73e4ff5eaea2027  /tmp/takt-android.apk" \
             | sha256sum --check
           test "$(stat --format=%s /tmp/takt-android.apk)" -eq 68980963
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 \
+            --output /tmp/takt-android.zip "https://$CALL_DOMAIN/downloads/takt-android.zip"
+          unzip -p /tmp/takt-android.zip takt-android.apk | sha256sum --check --status <(printf '%s  -\n' 'f9d8b88c11a4664f39be23b1e3132bbf86c915fd16de86e5e73e4ff5eaea2027')
           timeout 15 openssl s_client -connect "$TURN_DOMAIN:5349" -servername "$TURN_DOMAIN" </dev/null 2>/dev/null \
             | openssl x509 -noout -checkend 86400
