@@ -1,0 +1,9 @@
+{
+  "name": "takt-livekit-token-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "livekit-server-sdk": "2.17.0"
+  }
+}

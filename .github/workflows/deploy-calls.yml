@@ -49,7 +49,9 @@ jobs:
             "TURN_DOMAIN=$TURN_DOMAIN" \
             "LIVEKIT_API_KEY=$LIVEKIT_API_KEY" \
             "LIVEKIT_API_SECRET=$LIVEKIT_API_SECRET" \
-            "LIVEKIT_NODE_IP=$VPS_HOST" > /tmp/takt-livekit.env
+            "LIVEKIT_NODE_IP=$VPS_HOST" \
+            "SUPABASE_URL=https://qewgunjxdpliyeazyjkn.supabase.co" \
+            "SUPABASE_PUBLISHABLE_KEY=sb_publishable_oFE1KGP-BLnRJT_IaJ30Bg_eaFyPaf2" > /tmp/takt-livekit.env
           ssh "$VPS_USER@$VPS_HOST" 'install -d -m 700 /opt/takt/livekit'
           tar -czf - -C infra/livekit . | ssh "$VPS_USER@$VPS_HOST" 'tar -xzf - -C /opt/takt/livekit'
           scp /tmp/takt-livekit.env "$VPS_USER@$VPS_HOST:/opt/takt/livekit/.env"

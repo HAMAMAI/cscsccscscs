@@ -1,4 +1,23 @@
 services:
+  token-service:
+    build:
+      context: ./token-service
+    container_name: takt-call-token
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      PORT: "7890"
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      LIVEKIT_WS_URL: wss://${CALL_DOMAIN}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:7890/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+
   livekit:
     image: livekit/livekit-server:v1.13.4
     container_name: takt-livekit
@@ -24,6 +43,8 @@ services:
       - /etc/letsencrypt:/certs:ro
     depends_on:
       livekit:
+        condition: service_started
+      token-service:
         condition: service_started
 
   haproxy:
