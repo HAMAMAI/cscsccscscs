@@ -792,6 +792,7 @@ private fun formatTime(value: String): String = runCatching {
     SimpleDateFormat("HH:mm", Locale.getDefault()).format(date)
 }.getOrDefault("")
 
+@Composable
 private fun Modifier.navigationBarsPaddingCompat(): Modifier = padding(
     bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 )
