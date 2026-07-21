@@ -3,6 +3,9 @@ https://${CALL_DOMAIN}:8443 {
   handle /api/livekit-token {
     reverse_proxy 127.0.0.1:7890
   }
+  handle /health {
+    reverse_proxy 127.0.0.1:7890
+  }
   handle {
     reverse_proxy 127.0.0.1:7880
   }

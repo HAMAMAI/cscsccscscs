@@ -64,12 +64,20 @@ jobs:
           set -euo pipefail
           ssh "$VPS_USER@$VPS_HOST" 'chmod 700 /opt/takt/livekit/*.sh && cd /opt/takt/livekit && ./bootstrap-vps.sh'
 
+      - name: Container diagnostics
+        if: always()
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" 'cd /opt/takt/livekit && docker compose ps --all && docker compose logs --tail=120 token-service livekit caddy haproxy'
+
       - name: Verify public endpoints
         env:
           CALL_DOMAIN: ${{ secrets.CALL_DOMAIN }}
           TURN_DOMAIN: ${{ secrets.TURN_DOMAIN }}
         run: |
           set -euo pipefail
-          curl --fail --retry 10 --retry-all-errors --retry-delay 3 "https://$CALL_DOMAIN" >/dev/null
+          curl --fail --retry 10 --retry-all-errors --retry-delay 3 "https://$CALL_DOMAIN/health" | grep -q '"ok":true'
           timeout 15 openssl s_client -connect "$TURN_DOMAIN:443" -servername "$TURN_DOMAIN" </dev/null 2>/dev/null \
             | openssl x509 -noout -checkend 86400
