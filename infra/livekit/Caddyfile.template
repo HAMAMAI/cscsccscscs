@@ -1,3 +1,9 @@
+{
+  servers {
+    protocols h1 h2
+  }
+}
+
 https://${CALL_DOMAIN} {
   tls /certs/live/${CALL_DOMAIN}/fullchain.pem /certs/live/${CALL_DOMAIN}/privkey.pem
   handle /api/livekit-token {
