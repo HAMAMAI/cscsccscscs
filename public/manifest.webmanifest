@@ -1,0 +1,10 @@
+{
+  "name": "Такт",
+  "short_name": "Такт",
+  "description": "Чаты по ссылке и аудиозвонки без email",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#100d23",
+  "theme_color": "#100d23",
+  "icons": []
+}

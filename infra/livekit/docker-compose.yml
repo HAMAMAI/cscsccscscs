@@ -1,0 +1,40 @@
+services:
+  livekit:
+    image: livekit/livekit-server:v1.13.4
+    container_name: takt-livekit
+    restart: unless-stopped
+    network_mode: host
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes:
+      - ./generated/livekit.yaml:/etc/livekit.yaml:ro
+      - /etc/letsencrypt:/certs:ro
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:7880/"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    container_name: takt-call-caddy
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./generated/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /etc/letsencrypt:/certs:ro
+    depends_on:
+      livekit:
+        condition: service_started
+
+  haproxy:
+    image: haproxy:3.2.4-alpine
+    container_name: takt-call-gateway
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./generated/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      livekit:
+        condition: service_started
+      caddy:
+        condition: service_started

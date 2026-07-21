@@ -1,0 +1,8 @@
+https://${CALL_DOMAIN}:8443 {
+  tls /certs/live/${CALL_DOMAIN}/fullchain.pem /certs/live/${CALL_DOMAIN}/privkey.pem
+  reverse_proxy 127.0.0.1:7880
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+  }
+}
