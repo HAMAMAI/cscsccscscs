@@ -14,7 +14,7 @@ ss -lntup | grep -E ':(80|443|5349|7880|7881|7890)\b' || true
 docker inspect takt-call-caddy \
   --format 'caddy network={{.HostConfig.NetworkMode}} pid={{.State.Pid}} status={{.State.Status}}'
 if ! curl --fail --silent --show-error \
-  --resolve "${CALL_DOMAIN}:443:127.0.0.1" \
+  --resolve "${CALL_DOMAIN}:127.0.0.1" \
   "https://${CALL_DOMAIN}/health" | grep -q '"ok":true'; then
   docker compose logs --tail=120 caddy token-service
   exit 1

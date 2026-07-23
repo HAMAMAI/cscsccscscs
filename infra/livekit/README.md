@@ -1,15 +1,15 @@
 # Сервер аудиозвонков Такт
 
-Один узел LiveKit с аудио-only WebRTC, TURN/UDP на `443`, TURN/TLS на `5349` и WebSocket-сигналингом на HTTPS `443`. Встроенный token-service проверяет комнатный ключ через Supabase и выдаёт только короткоживущие токены с правом публикации микрофона.
+Один узел LiveKit с TURN/UDP на `443`, TURN/TLS на `5349` и WebSocket-сигналингом на HTTPS `8443`. Встроенный token-service проверяет комнатный ключ через Supabase и выдаёт только короткоживущие токены с разрешёнными для типа звонка источниками.
 
 Нужны два DNS-имени, направленные A-записями на VPS:
 
-- `call.example.com` — WebSocket/API LiveKit;
+- `call.example.com` — WebSocket/API LiveKit; в `CALL_DOMAIN` укажите `call.example.com:8443`;
 - `turn.example.com` — TURN/TLS.
 
 `bootstrap-vps.sh` устанавливает Docker Compose, `envsubst` и Certbot, получает сертификаты для обоих имён без email и запускает сервисы. Открытые входящие порты:
 
-- TCP `80`, `443`, `5349`, `7881`;
+- TCP `80`, `8443`, `5349`, `7881`;
 - UDP `443`, `50000:50100`;
 - SSH только с доверенных адресов, если это возможно.
 

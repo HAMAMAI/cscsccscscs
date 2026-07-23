@@ -18,6 +18,9 @@ set -a
 source .env
 set +a
 
+CALL_HOST="${CALL_DOMAIN%%:*}"
+export CALL_HOST
+
 for value in CALL_DOMAIN TURN_DOMAIN LIVEKIT_NODE_IP; do
   if [[ -z "${!value:-}" ]]; then
     echo "Missing $value in .env" >&2
@@ -30,7 +33,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
   ca-certificates certbot curl docker.io docker-compose-v2 gettext-base
 systemctl enable --now docker
 
-for domain in "$CALL_DOMAIN" "$TURN_DOMAIN"; do
+for domain in "$CALL_HOST" "$TURN_DOMAIN"; do
   if ! getent ahostsv4 "$domain" | awk '{print $1}' | grep -Fxq "$LIVEKIT_NODE_IP"; then
     echo "$domain does not resolve to $LIVEKIT_NODE_IP" >&2
     exit 1
@@ -46,6 +49,7 @@ if command -v ufw >/dev/null && ufw status | grep -q '^Status: active'; then
   ufw allow 80/tcp
   ufw allow 443/tcp
   ufw allow 443/udp
+  ufw allow 8443/tcp
   ufw allow 5349/tcp
   ufw allow 7881/tcp
   ufw allow 50000:50100/udp

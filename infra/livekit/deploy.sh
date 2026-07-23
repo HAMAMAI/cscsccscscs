@@ -13,6 +13,9 @@ set -a
 source .env
 set +a
 
+CALL_HOST="${CALL_DOMAIN%%:*}"
+export CALL_HOST
+
 for value in CALL_DOMAIN TURN_DOMAIN LIVEKIT_API_KEY LIVEKIT_API_SECRET LIVEKIT_NODE_IP SUPABASE_URL SUPABASE_PUBLISHABLE_KEY; do
   if [[ -z "${!value:-}" ]]; then
     echo "Missing $value in .env" >&2
