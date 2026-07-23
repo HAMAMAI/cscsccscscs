@@ -2,6 +2,7 @@ package app.takt.messenger.data
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 
 data class AuthSession(
     val userId: String,
@@ -138,6 +139,14 @@ data class CallHistoryItem(
     val startedAt: String,
     val endedAt: String? = null,
 )
+
+data class CallCredentials(val serverUrl: String, val token: String)
+
+class ApiException(
+    val errorCode: String,
+    val status: Int,
+    message: String,
+) : IOException(message)
 
 data class BootstrapData(
     val profile: UserProfile,

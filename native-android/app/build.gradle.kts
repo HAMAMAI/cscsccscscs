@@ -40,18 +40,6 @@ android {
             "SUPABASE_PUBLISHABLE_KEY",
             "\"${config("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_oFE1KGP-BLnRJT_IaJ30Bg_eaFyPaf2")}\"",
         )
-        // Compatibility aliases keep the isolated source copy buildable while
-        // the new client uses the names above.
-        buildConfigField(
-            "String",
-            "SUPABASE_KEY",
-            "\"${config("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_oFE1KGP-BLnRJT_IaJ30Bg_eaFyPaf2")}\"",
-        )
-        buildConfigField(
-            "String",
-            "TAKT_API_BASE_URL",
-            "\"${config("TAKT_API_BASE_URL", "")}\"",
-        )
         // This remains empty until the supplied LiveKit infrastructure has a
         // public token endpoint. Calls fail closed instead of exposing a secret.
         buildConfigField(
@@ -66,6 +54,20 @@ android {
         buildConfig = true
     }
 
+    signingConfigs {
+        create("release") {
+            val storePath = config("RELEASE_STORE_FILE", "")
+            if (storePath.isBlank()) {
+                initWith(getByName("debug"))
+            } else {
+                storeFile = file(storePath)
+                storePassword = config("RELEASE_STORE_PASSWORD", "")
+                keyAlias = config("RELEASE_KEY_ALIAS", "")
+                keyPassword = config("RELEASE_KEY_PASSWORD", "")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
@@ -75,6 +77,9 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // The first APK is manually installable without a secret being
+            // committed. Supply RELEASE_STORE_* for a persistent production key.
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
