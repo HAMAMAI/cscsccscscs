@@ -10,6 +10,9 @@ set +a
 curl --fail --silent --show-error \
   --retry 15 --retry-all-errors --retry-delay 2 \
   "http://127.0.0.1:7890/health" | grep -q '"ok":true'
+ss -lntup | grep -E ':(80|443|5349|7880|7881|7890)\b' || true
+docker inspect takt-call-caddy \
+  --format 'caddy network={{.HostConfig.NetworkMode}} pid={{.State.Pid}} status={{.State.Status}}'
 if ! curl --fail --silent --show-error \
   --resolve "${CALL_DOMAIN}:443:127.0.0.1" \
   "https://${CALL_DOMAIN}/health" | grep -q '"ok":true'; then
