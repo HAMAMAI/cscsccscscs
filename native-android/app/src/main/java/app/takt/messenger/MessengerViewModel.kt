@@ -37,8 +37,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.util.UUID
 
 enum class HomeSection { Chats, People, Calls, Settings }
@@ -590,10 +592,24 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
         if (declaredSize > MAX_ATTACHMENT_BYTES) throw IOException("Файл больше 8 МБ")
-        val bytes = resolver.openInputStream(uri)?.use { it.readBytes(MAX_ATTACHMENT_BYTES + 1) }
+        val bytes = resolver.openInputStream(uri)?.use(::readBytesLimited)
             ?: throw IOException("Не удалось прочитать файл")
-        if (bytes.isEmpty() || bytes.size > MAX_ATTACHMENT_BYTES) throw IOException("Файл должен быть не больше 8 МБ")
+        if (bytes.isEmpty()) throw IOException("Файл пуст")
         return UploadPayload(name.takeLast(120), resolver.getType(uri) ?: "application/octet-stream", bytes)
+    }
+
+    private fun readBytesLimited(input: InputStream): ByteArray {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var total = 0
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            total += count
+            if (total > MAX_ATTACHMENT_BYTES) throw IOException("Файл должен быть не больше 8 МБ")
+            output.write(buffer, 0, count)
+        }
+        return output.toByteArray()
     }
 
     private fun DownloadedAttachment.toPreview() = MediaPreview(fileName, mimeType, bytes, durationSeconds)

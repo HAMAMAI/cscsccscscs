@@ -338,6 +338,7 @@ class MessengerRepository {
         val json = runCatching { JSONObject(raw) }.getOrNull()
         val code = json?.optString("code")?.takeIf(String::isNotBlank)
             ?: json?.optString("error_code")?.takeIf(String::isNotBlank)
+            ?: "HTTP_$status"
         val message = json?.optString("msg")?.takeIf(String::isNotBlank)
             ?: json?.optString("message")?.takeIf(String::isNotBlank)
             ?: json?.optString("error_description")?.takeIf(String::isNotBlank)

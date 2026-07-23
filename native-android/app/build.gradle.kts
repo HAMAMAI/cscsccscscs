@@ -20,6 +20,7 @@ fun config(name: String, fallback: String): String =
 android {
     namespace = "app.takt.messenger"
     compileSdk = 36
+    buildToolsVersion = "36.0.0"
 
     defaultConfig {
         applicationId = "app.takt.messenger"
