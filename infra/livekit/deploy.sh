@@ -30,5 +30,7 @@ chmod 600 generated/livekit.yaml
 
 docker compose config --quiet
 docker compose pull
-docker compose up -d --remove-orphans --force-recreate
+# token-service is built from the checked-out source. Rebuild it on every
+# deploy so changes to authentication and token handling reach the VPS.
+docker compose up -d --build --remove-orphans --force-recreate
 docker compose ps
