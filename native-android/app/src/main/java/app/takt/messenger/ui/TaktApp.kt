@@ -1,6 +1,9 @@
 package app.takt.messenger.ui
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.media.MediaPlayer
 import androidx.activity.compose.BackHandler
@@ -42,16 +45,24 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import app.takt.messenger.CallConnectionState
+import app.takt.messenger.HomeDestination
 import app.takt.messenger.HomeSection
+import app.takt.messenger.MessengerUiState
 import app.takt.messenger.MessengerViewModel
-import app.takt.messenger.data.MediaAttachment
-import app.takt.messenger.data.MessengerMessage
+import app.takt.messenger.data.ChatFolder
+import app.takt.messenger.data.PrivacySettings
+import app.takt.messenger.data.UserProfile
 import java.io.File
 
 @Composable
 fun TaktApp(viewModel: MessengerViewModel) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
+    var pendingCallVideo by remember { mutableStateOf<Boolean?>(null) }
+    var pendingCallTarget by remember { mutableStateOf<UserProfile?>(null) }
+    var profileEditor by remember { mutableStateOf<UserProfile?>(null) }
+    var reportTarget by remember { mutableStateOf<UserProfile?>(null) }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) viewModel.sendUri(uri)
     }
@@ -59,10 +70,43 @@ fun TaktApp(viewModel: MessengerViewModel) {
         if (uri != null) viewModel.sendUri(uri)
     }
     val microphonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) viewModel.startRecording() else viewModel.clearError()
+        if (granted) viewModel.startRecording() else viewModel.showError("Для голосового сообщения нужен доступ к микрофону")
+    }
+    val callPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+        val video = pendingCallVideo ?: return@rememberLauncherForActivityResult
+        val target = pendingCallTarget
+        pendingCallVideo = null
+        pendingCallTarget = null
+        val microphoneGranted = granted[Manifest.permission.RECORD_AUDIO] == true
+        val cameraGranted = !video || granted[Manifest.permission.CAMERA] == true
+        if (microphoneGranted && cameraGranted) {
+            if (target == null) viewModel.startCall(video) else viewModel.startDirectCall(target, video)
+        } else {
+            viewModel.showError(if (video) "Для видеозвонка нужны разрешения на камеру и микрофон" else "Для звонка нужен доступ к микрофону")
+        }
+    }
+    val requestCall: (Boolean, UserProfile?) -> Unit = { video, target ->
+        pendingCallVideo = video
+        pendingCallTarget = target
+        callPermission.launch(
+            if (video) arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA)
+            else arrayOf(Manifest.permission.RECORD_AUDIO),
+        )
+    }
+    val copyLink: (String) -> Unit = { link ->
+        (context.getSystemService(ClipboardManager::class.java))?.setPrimaryClip(ClipData.newPlainText("Ссылка Такт", link))
+        viewModel.showNotice("Ссылка скопирована")
+    }
+    val shareLink: (String) -> Unit = { link ->
+        context.startActivity(
+            Intent.createChooser(
+                Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, link),
+                "Поделиться профилем",
+            ),
+        )
     }
 
-    BackHandler(enabled = state.activeChat != null) { viewModel.closeChat() }
+    BackHandler(enabled = state.destination != HomeDestination.None) { viewModel.closeDestination() }
 
     Box(Modifier.fillMaxSize()) {
         when {
@@ -95,9 +139,15 @@ fun TaktApp(viewModel: MessengerViewModel) {
                 onReact = viewModel::react,
                 onOpenMedia = viewModel::openMedia,
                 onUpdateTyping = viewModel::updateTyping,
+                onSaveDraft = viewModel::saveCurrentDraft,
                 onPin = { viewModel.setPinned(pinned = !(state.activeChat?.settings?.pinned ?: false)) },
-                onArchive = { viewModel.setPinned(archived = true) },
-                onStartCall = viewModel::startCall,
+                onArchive = { viewModel.setPinned(archived = !(state.activeChat?.settings?.archived ?: false)) },
+                onMute = viewModel::muteCurrentChat,
+                onUnmute = viewModel::unmuteCurrentChat,
+                onAssignFolder = viewModel::assignCurrentChatFolder,
+                onOpenProfile = { profile -> viewModel.openDestination(HomeDestination.PersonProfile(profile)) },
+                onStartCall = { video -> requestCall(video, null) },
+                onOpenCall = viewModel::openCallScreen,
                 onToggleMute = viewModel::toggleMute,
                 onEndCall = viewModel::endCall,
             )
@@ -110,22 +160,167 @@ fun TaktApp(viewModel: MessengerViewModel) {
                 onPeopleQuery = viewModel::updatePeopleQuery,
                 onOpenPerson = viewModel::openDirectChat,
                 onCreateGroup = viewModel::createGroup,
-                onSaveProfile = viewModel::saveProfile,
+                onPersonProfile = { profile -> viewModel.openDestination(HomeDestination.PersonProfile(profile)) },
+                onOpenDestination = viewModel::openDestination,
+                onShowAllChats = { viewModel.showFolderChats(null) },
                 onTheme = viewModel::updateTheme,
                 onAvatarShape = viewModel::updateAvatarShape,
-                onCreateFolder = viewModel::createFolder,
                 onSignOut = viewModel::signOut,
             )
         }
 
-        if (state.callState !is app.takt.messenger.CallConnectionState.Idle && state.activeChat == null) {
+        if (state.callState !is CallConnectionState.Idle && state.activeChat == null) {
             ActiveCallBar(
                 muted = state.callMuted,
-                onOpen = { state.activeChat?.let { viewModel.openChat(it.id) } },
+                onOpen = viewModel::openCallScreen,
                 onToggleMute = viewModel::toggleMute,
                 onEnd = viewModel::endCall,
             )
         }
+    }
+
+    when (val destination = state.destination) {
+        HomeDestination.None -> Unit
+        HomeDestination.SelfProfile -> state.profile?.let { profile ->
+            TaktSelfProfileActionSheet(
+                profile = profile.toSelfProfileUi(),
+                onDismissRequest = viewModel::closeDestination,
+                onChangeColor = { profileEditor = profile },
+                onChangeName = { profileEditor = profile },
+                onCopyProfileLink = copyLink,
+                onShareProfileLink = shareLink,
+            )
+        }
+
+        HomeDestination.Privacy -> TaktPrivacyScreen(
+            privacy = state.privacy.toTaktPrivacyUi(),
+            onBack = viewModel::closeDestination,
+            onPrivacyChange = { updated -> viewModel.savePrivacy(updated.toPrivacySettings()) },
+            onOpenBlockedUsers = { viewModel.openDestination(HomeDestination.BlockedUsers) },
+        )
+
+        HomeDestination.BlockedUsers -> TaktBlockedUsersScreen(
+            users = state.blockedUsers.map { blocked ->
+                TaktBlockedUserUi(
+                    id = blocked.profile.id,
+                    displayName = blocked.profile.displayName,
+                    username = blocked.profile.username,
+                    avatarColor = blocked.profile.avatarColor,
+                    blockedAtText = blocked.blockedAt?.let { "Заблокирован(а) ${formatChatTime(it)}" }.orEmpty(),
+                )
+            },
+            onBack = viewModel::closeDestination,
+            onOpenProfile = { userId ->
+                state.blockedUsers.firstOrNull { it.profile.id == userId }?.profile?.let { profile ->
+                    viewModel.openDestination(HomeDestination.PersonProfile(profile))
+                }
+            },
+            onUnblock = { userId ->
+                state.blockedUsers.firstOrNull { it.profile.id == userId }?.profile?.let { profile -> viewModel.toggleBlock(profile, false) }
+            },
+            onAddBlock = {
+                viewModel.closeDestination()
+                viewModel.selectSection(HomeSection.People)
+                viewModel.showNotice("Найдите пользователя и откройте его профиль, чтобы заблокировать")
+            },
+            isLoading = state.loading,
+        )
+
+        HomeDestination.Folders -> TaktFoldersScreen(
+            folders = state.folders.map { folder -> folder.toTaktFolderUi(state) },
+            onBack = viewModel::closeDestination,
+            onOpenAllChats = { viewModel.showFolderChats(null) },
+            onOpenFolder = viewModel::showFolderChats,
+            onCreateFolder = viewModel::createFolder,
+            onUpdateFolder = { id, name, color ->
+                state.folders.firstOrNull { it.id == id }?.let { original ->
+                    viewModel.updateFolder(original.copy(name = name, color = color))
+                }
+            },
+            onDeleteFolder = { id -> state.folders.firstOrNull { it.id == id }?.let(viewModel::deleteFolder) },
+        )
+
+        HomeDestination.Search -> TaktGlobalSearchScreen(
+            query = state.messageSearchQuery,
+            results = state.toSearchResults(),
+            recentQueries = state.recentSearchQueries,
+            onBack = viewModel::closeDestination,
+            onQueryChange = viewModel::updateMessageSearch,
+            onOpenResult = { result ->
+                when (result.kind) {
+                    TaktSearchResultKind.Chat -> viewModel.openChat(result.id)
+                    TaktSearchResultKind.Person -> state.globalPeople.firstOrNull { it.id == result.id }?.let { profile ->
+                        viewModel.openDestination(HomeDestination.PersonProfile(profile))
+                    }
+                    TaktSearchResultKind.Message -> state.messageSearchResults.firstOrNull { it.message.id == result.id }?.let(viewModel::openSearchResult)
+                    else -> Unit
+                }
+            },
+            onClearRecent = viewModel::clearRecentSearches,
+            isLoading = state.loading,
+        )
+
+        is HomeDestination.PersonProfile -> {
+            val profile = destination.profile
+            TaktPersonProfileScreen(
+                profile = profile.toPersonProfileUi(state),
+                onBack = viewModel::closeDestination,
+                onMessage = {
+                    viewModel.closeDestination()
+                    viewModel.openDirectChat(profile)
+                },
+                onAudioCall = { requestCall(false, profile) },
+                onVideoCall = { requestCall(true, profile) },
+                onBlock = { viewModel.toggleBlock(profile, true) },
+                onUnblock = { viewModel.toggleBlock(profile, false) },
+                onReport = { reportTarget = profile },
+                onCopyProfileLink = copyLink,
+            )
+        }
+    }
+
+    val connectedCall = state.callState as? CallConnectionState.Connected
+    if (state.callScreenVisible && connectedCall != null) {
+        TaktCallScreen(
+            call = connectedCall.call,
+            room = viewModel.currentCallRoom(),
+            muted = state.callMuted,
+            cameraEnabled = state.callCameraEnabled,
+            onBack = viewModel::closeCallScreen,
+            onToggleMute = viewModel::toggleMute,
+            onToggleCamera = viewModel::toggleCamera,
+            onEnd = viewModel::endCall,
+        )
+    }
+
+    state.forwarding?.let {
+        TaktForwardDialog(
+            conversations = state.conversations,
+            activeConversationId = state.activeChat?.id,
+            onDismiss = { viewModel.setForward(null) },
+            onPick = viewModel::forwardMessageTo,
+        )
+    }
+
+    profileEditor?.let { profile ->
+        TaktProfileEditorDialog(
+            profile = profile,
+            onDismiss = { profileEditor = null },
+            onSave = { name, username, about, color ->
+                viewModel.saveProfile(name, username, about, color)
+                profileEditor = null
+            },
+        )
+    }
+    reportTarget?.let { profile ->
+        TaktReportDialog(
+            profile = profile,
+            onDismiss = { reportTarget = null },
+            onSend = { reason ->
+                viewModel.submitReport(profile, reason)
+                reportTarget = null
+            },
+        )
     }
 
     state.error?.let { message ->
@@ -152,6 +347,105 @@ fun TaktApp(viewModel: MessengerViewModel) {
             durationSeconds = preview.durationSeconds,
             onClose = viewModel::closeMediaPreview,
         )
+    }
+}
+
+private fun UserProfile.profileLink(): String = "takt://user?id=$id"
+
+private fun UserProfile.toSelfProfileUi() = TaktSelfProfileUi(
+    id = id,
+    displayName = displayName,
+    username = username,
+    avatarColor = avatarColor,
+    publicLink = profileLink(),
+)
+
+private fun UserProfile.toPersonProfileUi(state: MessengerUiState) = TaktPersonProfileUi(
+    id = id,
+    displayName = displayName,
+    username = username,
+    about = about,
+    avatarColor = avatarColor,
+    statusText = if (isOnline) "в сети" else "был(а) недавно",
+    publicLink = profileLink(),
+    isBlocked = state.blockedUsers.any { it.profile.id == id },
+)
+
+private fun String.toTaktAudience(): TaktPrivacyAudience = when (lowercase()) {
+    "contacts" -> TaktPrivacyAudience.Contacts
+    "nobody" -> TaktPrivacyAudience.Nobody
+    else -> TaktPrivacyAudience.Everyone
+}
+
+private fun TaktPrivacyAudience.toPrivacyScope(): String = name.lowercase()
+
+private fun PrivacySettings.toTaktPrivacyUi() = TaktPrivacyUi(
+    showAvatarTo = showAvatarTo.toTaktAudience(),
+    showLastSeenTo = showLastSeenTo.toTaktAudience(),
+    allowCallsFrom = allowCallsFrom.toTaktAudience(),
+    allowMessagesFrom = allowMessagesFrom.toTaktAudience(),
+    allowGroupInvitesFrom = allowGroupInvitesFrom.toTaktAudience(),
+)
+
+private fun TaktPrivacyUi.toPrivacySettings() = PrivacySettings(
+    showAvatarTo = showAvatarTo.toPrivacyScope(),
+    showLastSeenTo = showLastSeenTo.toPrivacyScope(),
+    allowCallsFrom = allowCallsFrom.toPrivacyScope(),
+    allowMessagesFrom = allowMessagesFrom.toPrivacyScope(),
+    allowGroupInvitesFrom = allowGroupInvitesFrom.toPrivacyScope(),
+)
+
+private fun ChatFolder.toTaktFolderUi(state: MessengerUiState) = TaktFolderUi(
+    id = id,
+    name = name,
+    color = color,
+    position = position,
+    chatCount = state.conversations.count { it.settings.folderId == id },
+)
+
+private fun MessengerUiState.toSearchResults(): List<TaktSearchResultUi> {
+    val normalized = messageSearchQuery.trim()
+    if (normalized.length < 2) return emptyList()
+    val needle = normalized.lowercase()
+    return buildList {
+        conversations.filter { chat ->
+            chat.title.lowercase().contains(needle) || chat.lastMessage?.body?.lowercase()?.contains(needle) == true
+        }.take(20).forEach { chat ->
+            add(
+                TaktSearchResultUi(
+                    id = chat.id,
+                    title = chat.title,
+                    subtitle = chat.lastMessage?.body?.ifBlank { "Вложение" } ?: "Чат",
+                    kind = TaktSearchResultKind.Chat,
+                    avatarColor = chat.avatarColor,
+                    timeLabel = formatChatTime(chat.updatedAt),
+                ),
+            )
+        }
+        globalPeople.take(20).forEach { person ->
+            add(
+                TaktSearchResultUi(
+                    id = person.id,
+                    title = person.displayName,
+                    subtitle = person.username?.let { "@$it" } ?: person.about.ifBlank { "Пользователь" },
+                    kind = TaktSearchResultKind.Person,
+                    avatarColor = person.avatarColor,
+                ),
+            )
+        }
+        messageSearchResults.take(50).forEach { result ->
+            val conversation = conversations.firstOrNull { it.id == result.conversationId }
+            add(
+                TaktSearchResultUi(
+                    id = result.message.id,
+                    title = result.message.senderName,
+                    subtitle = "${conversation?.title ?: "Чат"}: ${result.message.body.ifBlank { "Вложение" }}",
+                    kind = TaktSearchResultKind.Message,
+                    avatarColor = result.message.senderColor,
+                    timeLabel = formatChatTime(result.message.createdAt),
+                ),
+            )
+        }
     }
 }
 

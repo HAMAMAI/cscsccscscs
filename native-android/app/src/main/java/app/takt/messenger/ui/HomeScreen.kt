@@ -67,6 +67,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.takt.messenger.HomeSection
+import app.takt.messenger.HomeDestination
 import app.takt.messenger.MessengerUiState
 import app.takt.messenger.data.AppearanceSettings
 import app.takt.messenger.data.AvatarShape
@@ -87,14 +88,13 @@ fun HomeScreen(
     onPeopleQuery: (String) -> Unit,
     onOpenPerson: (UserProfile) -> Unit,
     onCreateGroup: (String, List<UserProfile>) -> Unit,
-    onSaveProfile: (String, String, String, String) -> Unit,
+    onPersonProfile: (UserProfile) -> Unit,
+    onOpenDestination: (HomeDestination) -> Unit,
+    onShowAllChats: () -> Unit,
     onTheme: (ThemeMode) -> Unit,
     onAvatarShape: (AvatarShape) -> Unit,
-    onCreateFolder: (String) -> Unit,
     onSignOut: () -> Unit,
 ) {
-    var editProfile by rememberSaveable { mutableStateOf(false) }
-    var createFolder by rememberSaveable { mutableStateOf(false) }
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
@@ -108,11 +108,12 @@ fun HomeScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = { editProfile = true }) {
+                    IconButton(onClick = { onOpenDestination(HomeDestination.SelfProfile) }) {
                         Avatar(state.profile, state.appearance, 34)
                     }
                 },
                 actions = {
+                    IconButton(onClick = { onOpenDestination(HomeDestination.Search) }) { Icon(Icons.Default.Search, "Поиск сообщений") }
                     IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "Обновить") }
                 },
             )
@@ -140,7 +141,9 @@ fun HomeScreen(
                 conversations = state.conversations,
                 appearance = state.appearance,
                 onOpenChat = onOpenChat,
-                onShowArchive = { onSection(HomeSection.Chats) },
+                folderFilterId = state.folderFilterId,
+                folderTitle = state.folders.firstOrNull { it.id == state.folderFilterId }?.name,
+                onClearFolder = onShowAllChats,
                 modifier = Modifier.padding(padding),
             )
             HomeSection.People -> PeoplePanel(
@@ -149,45 +152,30 @@ fun HomeScreen(
                 appearance = state.appearance,
                 onQuery = onPeopleQuery,
                 onOpen = onOpenPerson,
+                onProfile = onPersonProfile,
                 onCreateGroup = onCreateGroup,
                 modifier = Modifier.padding(padding),
             )
             HomeSection.Calls -> CallsPanel(
                 calls = state.calls,
                 conversations = state.conversations,
+                onOpenChat = { id -> state.conversations.firstOrNull { it.id == id }?.let(onOpenChat) },
                 modifier = Modifier.padding(padding),
             )
             HomeSection.Settings -> SettingsPanel(
                 profile = state.profile,
                 folders = state.folders.map { it.name },
                 appearance = state.appearance,
-                onEditProfile = { editProfile = true },
+                onEditProfile = { onOpenDestination(HomeDestination.SelfProfile) },
                 onTheme = onTheme,
                 onAvatarShape = onAvatarShape,
-                onCreateFolder = { createFolder = true },
+                onOpenPrivacy = { onOpenDestination(HomeDestination.Privacy) },
+                onOpenBlocked = { onOpenDestination(HomeDestination.BlockedUsers) },
+                onOpenFolders = { onOpenDestination(HomeDestination.Folders) },
                 onSignOut = onSignOut,
                 modifier = Modifier.padding(padding),
             )
         }
-    }
-    if (editProfile && state.profile != null) {
-        EditProfileDialog(
-            profile = state.profile,
-            onSave = { name, username, about, color ->
-                onSaveProfile(name, username, about, color)
-                editProfile = false
-            },
-            onDismiss = { editProfile = false },
-        )
-    }
-    if (createFolder) {
-        SimpleTextDialog(
-            title = "Новая папка",
-            label = "Название папки",
-            confirm = "Создать",
-            onConfirm = { name -> onCreateFolder(name); createFolder = false },
-            onDismiss = { createFolder = false },
-        )
     }
 }
 
@@ -196,12 +184,16 @@ private fun ChatsPanel(
     conversations: List<ConversationSummary>,
     appearance: AppearanceSettings,
     onOpenChat: (ConversationSummary) -> Unit,
-    onShowArchive: () -> Unit,
+    folderFilterId: String?,
+    folderTitle: String?,
+    onClearFolder: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val visible = conversations.filterNot { it.settings.archived }
-    val archived = conversations.count { it.settings.archived }
-    if (visible.isEmpty()) {
+    var showArchived by rememberSaveable { mutableStateOf(false) }
+    val scoped = if (folderFilterId == null) conversations else conversations.filter { it.settings.folderId == folderFilterId }
+    val visible = scoped.filter { it.settings.archived == showArchived }
+    val archived = scoped.count { it.settings.archived }
+    if (visible.isEmpty() && (showArchived || archived == 0)) {
         Column(
             modifier.fillMaxSize().padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -215,15 +207,25 @@ private fun ChatsPanel(
         return
     }
     LazyColumn(modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 6.dp)) {
-        if (archived > 0) {
+        if (folderTitle != null) {
+            item {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text(folderTitle, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    TextButton(onClick = onClearFolder) { Text("Все") }
+                }
+            }
+        }
+        if (archived > 0 || showArchived) {
             item {
                 Row(
-                    Modifier.fillMaxWidth().clickable(onClick = onShowArchive).padding(horizontal = 18.dp, vertical = 12.dp),
+                    Modifier.fillMaxWidth().clickable(onClick = { showArchived = !showArchived }).padding(horizontal = 18.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(Icons.Default.Archive, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.width(12.dp))
-                    Text("Архив · $archived", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (showArchived) "Все чаты" else "Архив · $archived", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -282,6 +284,7 @@ private fun PeoplePanel(
     appearance: AppearanceSettings,
     onQuery: (String) -> Unit,
     onOpen: (UserProfile) -> Unit,
+    onProfile: (UserProfile) -> Unit,
     onCreateGroup: (String, List<UserProfile>) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -335,6 +338,9 @@ private fun PeoplePanel(
                         }
                         if (person.isOnline) Text("в сети", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
                         if (selectingGroup && person.id in selected) Icon(Icons.Default.Check, "Выбран", tint = MaterialTheme.colorScheme.primary)
+                        if (!selectingGroup) {
+                            IconButton(onClick = { onProfile(person) }) { Icon(Icons.Default.MoreVert, "Действия с пользователем") }
+                        }
                     }
                 }
             }
@@ -357,7 +363,12 @@ private fun PeoplePanel(
 }
 
 @Composable
-private fun CallsPanel(calls: List<app.takt.messenger.data.CallHistoryItem>, conversations: List<ConversationSummary>, modifier: Modifier = Modifier) {
+private fun CallsPanel(
+    calls: List<app.takt.messenger.data.CallHistoryItem>,
+    conversations: List<ConversationSummary>,
+    onOpenChat: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val titles = conversations.associate { it.id to it.title }
     if (calls.isEmpty()) {
         Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -373,7 +384,7 @@ private fun CallsPanel(calls: List<app.takt.messenger.data.CallHistoryItem>, con
     LazyColumn(modifier.fillMaxSize().padding(16.dp)) {
         item { Text("Звонки", style = MaterialTheme.typography.titleLarge); Spacer(Modifier.height(8.dp)) }
         items(calls, key = { it.id }) { call ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().clickable { onOpenChat(call.conversationId) }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Surface(Modifier.size(42.dp), shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
                     Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.Call, null, tint = MaterialTheme.colorScheme.primary) }
                 }
@@ -396,7 +407,9 @@ private fun SettingsPanel(
     onEditProfile: () -> Unit,
     onTheme: (ThemeMode) -> Unit,
     onAvatarShape: (AvatarShape) -> Unit,
-    onCreateFolder: () -> Unit,
+    onOpenPrivacy: () -> Unit,
+    onOpenBlocked: () -> Unit,
+    onOpenFolders: () -> Unit,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -419,10 +432,12 @@ private fun SettingsPanel(
         SettingsRow(Icons.Default.Person, "Форма аватаров", when (appearance.avatarShape) { AvatarShape.Circle -> "Круг"; AvatarShape.Rounded -> "Скруглённый"; AvatarShape.Square -> "Квадрат" }) {
             onAvatarShape(when (appearance.avatarShape) { AvatarShape.Circle -> AvatarShape.Rounded; AvatarShape.Rounded -> AvatarShape.Square; AvatarShape.Square -> AvatarShape.Circle })
         }
-        SettingsRow(Icons.Default.Folder, "Папки", if (folders.isEmpty()) "Создать папку" else folders.joinToString()) { onCreateFolder() }
+        SettingsRow(Icons.Default.Person, "Приватность", "Кто видит профиль, пишет и звонит") { onOpenPrivacy() }
+        SettingsRow(Icons.Default.Close, "Чёрный список", "Заблокировать или разблокировать пользователей") { onOpenBlocked() }
+        SettingsRow(Icons.Default.Folder, "Папки", if (folders.isEmpty()) "Создать папку" else folders.joinToString()) { onOpenFolders() }
         HorizontalDivider()
         SettingsRow(Icons.Default.Logout, "Выйти", "Сессия будет завершена") { onSignOut() }
-        Text("PIN и биометрия, уведомления и приватность подготовлены в следующем защищённом этапе.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Профиль, приватность и чёрный список синхронизируются с сервером аккаунта.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

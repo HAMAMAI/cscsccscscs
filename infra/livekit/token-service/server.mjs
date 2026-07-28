@@ -2,7 +2,6 @@ import http from "node:http";
 import { AccessToken, TrackSource } from "livekit-server-sdk";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const TOKEN = /^[0-9a-f]{64}$/i;
 const PORT = Number(process.env.PORT || 7890);
 const required = [
   "SUPABASE_URL",
@@ -37,63 +36,72 @@ function reply(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
+function bearerToken(header) {
+  const match = /^Bearer\s+(.+)$/i.exec(String(header || ""));
+  return match?.[1]?.trim() || null;
+}
+
+async function readJson(request) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > 16_384) throw new Error("Request too large");
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+async function callContext(accessToken, callId) {
+  const validation = await fetch(`${process.env.SUPABASE_URL}/rest/v1/rpc/takt_call_token_context`, {
+    method: "POST",
+    headers: {
+      apikey: process.env.SUPABASE_PUBLISHABLE_KEY,
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ p_call_id: callId }),
+  });
+  if (!validation.ok) return null;
+  const payload = await validation.json();
+  const value = Array.isArray(payload) ? payload[0] : payload;
+  if (!value || !UUID.test(value.identity || "") || typeof value.room_name !== "string") return null;
+  return value;
+}
+
 const server = http.createServer(async (request, response) => {
-  if (request.method === "GET" && request.url === "/health") {
-    return reply(response, 200, { ok: true });
-  }
-  if (request.method !== "POST" || request.url !== "/api/livekit-token") {
-    return reply(response, 404, { error: "Not found" });
-  }
-  if (!allowed(request.socket.remoteAddress || "unknown")) {
-    return reply(response, 429, { error: "Too many requests" });
-  }
+  const path = new URL(request.url || "/", "http://127.0.0.1").pathname;
+  if (request.method === "GET" && path === "/health") return reply(response, 200, { ok: true });
+  if (request.method !== "POST" || path !== "/api/livekit-token") return reply(response, 404, { error: "Not found" });
+  if (!allowed(request.socket.remoteAddress || "unknown")) return reply(response, 429, { error: "Too many requests" });
 
   try {
-    const chunks = [];
-    let size = 0;
-    for await (const chunk of request) {
-      size += chunk.length;
-      if (size > 16_384) throw new Error("Request too large");
-      chunks.push(chunk);
-    }
-    const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    if (!UUID.test(input.participantId || "") || !UUID.test(input.roomId || "") || !TOKEN.test(input.participantToken || "")) {
-      return reply(response, 400, { error: "Invalid call session" });
-    }
+    const accessToken = bearerToken(request.headers.authorization);
+    if (!accessToken) return reply(response, 401, { error: "Authentication required" });
+    const input = await readJson(request);
+    if (!UUID.test(input.callId || "")) return reply(response, 400, { error: "Invalid call id" });
 
-    const validation = await fetch(`${process.env.SUPABASE_URL}/rest/v1/rpc/validate_call_session`, {
-      method: "POST",
-      headers: {
-        apikey: process.env.SUPABASE_PUBLISHABLE_KEY,
-        Authorization: `Bearer ${process.env.SUPABASE_PUBLISHABLE_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        p_room_id: input.roomId,
-        p_participant_id: input.participantId,
-        p_token: input.participantToken,
-      }),
-    });
-    if (!validation.ok) return reply(response, 401, { error: "Access denied" });
+    // RLS and the authenticated Supabase JWT establish membership and call state.
+    // A client never sends an identity, room name, or LiveKit secret.
+    const context = await callContext(accessToken, input.callId);
+    if (!context) return reply(response, 403, { error: "Access denied" });
 
-    const participant = await validation.json();
-    const accessToken = new AccessToken(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET, {
-      identity: participant.participant_id,
-      name: participant.display_name,
+    const sources = [TrackSource.MICROPHONE];
+    if (context.is_video === true) sources.push(TrackSource.CAMERA);
+    const token = new AccessToken(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET, {
+      identity: context.identity,
+      name: String(context.display_name || "Takt user").slice(0, 128),
       ttl: "10m",
     });
-    accessToken.addGrant({
-      room: `takt-${participant.room_id}`,
+    token.addGrant({
+      room: context.room_name,
       roomJoin: true,
       canPublish: true,
       canSubscribe: true,
       canPublishData: false,
-      canPublishSources: [TrackSource.MICROPHONE],
+      canPublishSources: sources,
     });
-    return reply(response, 200, {
-      serverUrl: process.env.LIVEKIT_WS_URL,
-      token: await accessToken.toJwt(),
-    });
+    return reply(response, 200, { serverUrl: process.env.LIVEKIT_WS_URL, token: await token.toJwt() });
   } catch (error) {
     console.error(error instanceof Error ? error.message : error);
     return reply(response, 400, { error: "Invalid request" });

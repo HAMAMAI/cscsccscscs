@@ -19,8 +19,8 @@ class CallForegroundService : Service() {
         super.onCreate()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Аудиозвонки", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "Активный аудиозвонок в Такте"
+                NotificationChannel(CHANNEL_ID, "Звонки", NotificationManager.IMPORTANCE_LOW).apply {
+                    description = "Активный звонок в Такте"
                     setSound(null, null)
                 },
             )
@@ -28,6 +28,7 @@ class CallForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val video = intent?.getBooleanExtra(EXTRA_VIDEO, false) == true
         val openApp = PendingIntent.getActivity(
             this,
             0,
@@ -36,8 +37,8 @@ class CallForegroundService : Service() {
         )
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Такт · аудиозвонок")
-            .setContentText("Микрофон используется для разговора")
+            .setContentTitle(if (video) "Такт · видеозвонок" else "Такт · аудиозвонок")
+            .setContentText(if (video) "Камера и микрофон используются для разговора" else "Микрофон используется для разговора")
             .setContentIntent(openApp)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -45,7 +46,9 @@ class CallForegroundService : Service() {
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            val serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
+                if (video) ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA else 0
+            startForeground(NOTIFICATION_ID, notification, serviceType)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -57,9 +60,13 @@ class CallForegroundService : Service() {
     companion object {
         private const val CHANNEL_ID = "takt_audio_calls"
         private const val NOTIFICATION_ID = 41
+        private const val EXTRA_VIDEO = "app.takt.messenger.call.EXTRA_VIDEO"
 
-        fun start(context: Context) {
-            ContextCompat.startForegroundService(context, Intent(context, CallForegroundService::class.java))
+        fun start(context: Context, video: Boolean = false) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, CallForegroundService::class.java).putExtra(EXTRA_VIDEO, video),
+            )
         }
 
         fun stop(context: Context) {

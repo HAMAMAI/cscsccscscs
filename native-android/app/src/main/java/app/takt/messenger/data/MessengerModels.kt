@@ -30,6 +30,25 @@ data class ChatFolder(
     val position: Int,
 )
 
+/** Privacy switches are stored server-side, not merely in local preferences. */
+data class PrivacySettings(
+    val showAvatarTo: String = "everyone",
+    val showLastSeenTo: String = "everyone",
+    val allowCallsFrom: String = "everyone",
+    val allowMessagesFrom: String = "everyone",
+    val allowGroupInvitesFrom: String = "everyone",
+)
+
+data class BlockedUser(
+    val profile: UserProfile,
+    val blockedAt: String? = null,
+)
+
+data class MessageSearchResult(
+    val conversationId: String,
+    val message: MessengerMessage,
+)
+
 data class ChatSettings(
     val archived: Boolean = false,
     val pinned: Boolean = false,
@@ -208,6 +227,22 @@ fun JSONObject.toFolder(): ChatFolder = ChatFolder(
     position = optInt("position", 0),
 )
 
+fun JSONObject.toPrivacySettings(): PrivacySettings = PrivacySettings(
+    showAvatarTo = optString("show_avatar_to", "everyone"),
+    showLastSeenTo = optString("show_last_seen_to", "everyone"),
+    allowCallsFrom = optString("allow_calls_from", "everyone"),
+    allowMessagesFrom = optString("allow_messages_from", "everyone"),
+    allowGroupInvitesFrom = optString("allow_group_invites_from", "everyone"),
+)
+
+fun JSONObject.toBlockedUser(): BlockedUser {
+    val profileObject = optJSONObject("profile") ?: this
+    return BlockedUser(
+        profile = profileObject.toProfile(),
+        blockedAt = stringOrNull("blocked_at"),
+    )
+}
+
 fun JSONObject.toChatSettings(): ChatSettings = ChatSettings(
     archived = optBoolean("is_archived", false),
     pinned = optBoolean("is_pinned", false),
@@ -264,6 +299,11 @@ fun JSONObject.toMessengerMessage(): MessengerMessage = MessengerMessage(
     attachment = objectOrNull("attachment")?.toAttachment(),
     reactions = optJSONArray("reactions")?.objects()?.map(JSONObject::toReaction).orEmpty(),
     status = optString("status", "sent").toDeliveryStatus(),
+)
+
+fun JSONObject.toMessageSearchResult(): MessageSearchResult = MessageSearchResult(
+    conversationId = getString("conversation_id"),
+    message = getJSONObject("message").toMessengerMessage(),
 )
 
 fun JSONObject.toConversationSummary(): ConversationSummary = ConversationSummary(

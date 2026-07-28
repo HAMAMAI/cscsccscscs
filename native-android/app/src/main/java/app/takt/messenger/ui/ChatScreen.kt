@@ -1,5 +1,6 @@
 package app.takt.messenger.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -73,6 +74,7 @@ import app.takt.messenger.CallConnectionState
 import app.takt.messenger.MessengerUiState
 import app.takt.messenger.data.DeliveryStatus
 import app.takt.messenger.data.MessengerMessage
+import app.takt.messenger.data.UserProfile
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -92,9 +94,15 @@ fun ChatScreen(
     onReact: (MessengerMessage, String) -> Unit,
     onOpenMedia: (MessengerMessage) -> Unit,
     onUpdateTyping: () -> Unit,
+    onSaveDraft: (String) -> Unit,
     onPin: () -> Unit,
     onArchive: () -> Unit,
+    onMute: () -> Unit,
+    onUnmute: () -> Unit,
+    onAssignFolder: (String) -> Unit,
+    onOpenProfile: (UserProfile) -> Unit,
     onStartCall: (Boolean) -> Unit,
+    onOpenCall: () -> Unit,
     onToggleMute: () -> Unit,
     onEndCall: () -> Unit,
 ) {
@@ -102,6 +110,10 @@ fun ChatScreen(
     var draft by rememberSaveable(chat.id) { mutableStateOf(chat.settings.draft) }
     var menuMessage by remember { mutableStateOf<MessengerMessage?>(null) }
     var showChatMenu by rememberSaveable { mutableStateOf(false) }
+    BackHandler {
+        onSaveDraft(draft)
+        onBack()
+    }
     LaunchedEffect(state.editing?.id) {
         state.editing?.let { draft = it.body }
     }
@@ -109,7 +121,24 @@ fun ChatScreen(
         topBar = {
             CenterAlignedTopAppBar(
                 title = {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.clickable {
+                            chat.members.firstOrNull { it.id != state.profile?.id }?.let { member ->
+                                onOpenProfile(
+                                    UserProfile(
+                                        id = member.id,
+                                        username = member.username,
+                                        displayName = member.displayName,
+                                        about = "",
+                                        avatarColor = member.avatarColor,
+                                        lastSeenAt = member.lastSeenAt,
+                                        isOnline = member.isOnline,
+                                    ),
+                                )
+                            }
+                        },
+                    ) {
                         Text(chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
                         val typing = chat.typing.firstOrNull()
                         Text(
@@ -123,7 +152,7 @@ fun ChatScreen(
                         )
                     }
                 },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад") } },
+                navigationIcon = { IconButton(onClick = { onSaveDraft(draft); onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад") } },
                 actions = {
                     IconButton(onClick = { onStartCall(false) }) { Icon(Icons.Default.Call, "Аудиозвонок") }
                     IconButton(onClick = { onStartCall(true) }) { Icon(Icons.Default.Videocam, "Видеозвонок") }
@@ -158,7 +187,7 @@ fun ChatScreen(
             if (state.callState !is CallConnectionState.Idle) {
                 ActiveCallBar(
                     muted = state.callMuted,
-                    onOpen = {},
+                    onOpen = onOpenCall,
                     onToggleMute = onToggleMute,
                     onEnd = onEndCall,
                 )
@@ -214,7 +243,19 @@ fun ChatScreen(
                         Icon(Icons.Default.PushPin, null); Spacer(Modifier.width(8.dp)); Text(if (chat.settings.pinned) "Открепить чат" else "Закрепить чат")
                     }
                     TextButton(onClick = { onArchive(); showChatMenu = false }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Default.Archive, null); Spacer(Modifier.width(8.dp)); Text("Архивировать чат")
+                        Icon(Icons.Default.Archive, null); Spacer(Modifier.width(8.dp)); Text(if (chat.settings.archived) "Вернуть из архива" else "Архивировать чат")
+                    }
+                    TextButton(onClick = { if (chat.settings.mutedUntil == null) onMute() else onUnmute(); showChatMenu = false }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.Mic, null); Spacer(Modifier.width(8.dp)); Text(if (chat.settings.mutedUntil == null) "Выключить звук на 8 часов" else "Включить звук")
+                    }
+                    if (state.folders.isNotEmpty()) {
+                        HorizontalDivider()
+                        Text("Переместить в папку", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 12.dp, top = 8.dp))
+                        state.folders.forEach { folder ->
+                            TextButton(onClick = { onAssignFolder(folder.id); showChatMenu = false }, modifier = Modifier.fillMaxWidth()) {
+                                Icon(Icons.Default.PushPin, null); Spacer(Modifier.width(8.dp)); Text(folder.name)
+                            }
+                        }
                     }
                 }
             },

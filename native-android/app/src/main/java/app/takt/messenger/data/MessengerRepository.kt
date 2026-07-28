@@ -133,6 +133,12 @@ class MessengerRepository {
         }
     }
 
+    suspend fun getPublicProfile(session: AuthSession, userId: String): UserProfile = rpc(
+        "takt_get_public_profile",
+        JSONObject().put("p_user_id", userId),
+        session,
+    ).toProfile()
+
     suspend fun openDirectChat(session: AuthSession, userId: String): ChatState = rpc(
         "takt_open_direct_chat",
         JSONObject().put("p_other_user_id", userId),
@@ -220,6 +226,8 @@ class MessengerRepository {
         conversationId: String,
         archived: Boolean? = null,
         pinned: Boolean? = null,
+        folderId: String? = null,
+        mutedUntil: String? = null,
         draft: String? = null,
     ): ChatState = rpc(
         "takt_update_chat_settings",
@@ -227,7 +235,19 @@ class MessengerRepository {
             .put("p_conversation_id", conversationId)
             .put("p_is_archived", archived ?: JSONObject.NULL)
             .put("p_is_pinned", pinned ?: JSONObject.NULL)
+            .put("p_folder_id", folderId ?: JSONObject.NULL)
+            .put("p_muted_until", mutedUntil ?: JSONObject.NULL)
             .put("p_draft_text", draft ?: JSONObject.NULL),
+        session,
+    ).toChatState()
+
+    suspend fun patchChatSettings(
+        session: AuthSession,
+        conversationId: String,
+        patch: JSONObject,
+    ): ChatState = rpc(
+        "takt_patch_chat_settings",
+        JSONObject().put("p_conversation_id", conversationId).put("p_settings", patch),
         session,
     ).toChatState()
 
@@ -243,16 +263,66 @@ class MessengerRepository {
         rpc("takt_set_presence", JSONObject().put("p_online", online), session)
     }
 
-    suspend fun createFolder(session: AuthSession, name: String): ChatFolder = rpc(
+    suspend fun createFolder(session: AuthSession, name: String, color: String = "#5ED8C7"): ChatFolder = rpc(
         "takt_create_folder",
-        JSONObject().put("p_name", name),
+        JSONObject().put("p_name", name).put("p_color", color),
         session,
     ).toFolder()
+
+    suspend fun updateFolder(session: AuthSession, folder: ChatFolder): ChatFolder = rpc(
+        "takt_update_folder",
+        JSONObject()
+            .put("p_folder_id", folder.id)
+            .put("p_name", folder.name)
+            .put("p_color", folder.color)
+            .put("p_position", folder.position),
+        session,
+    ).toFolder()
+
+    suspend fun deleteFolder(session: AuthSession, folderId: String) {
+        rpc("takt_delete_folder", JSONObject().put("p_folder_id", folderId), session)
+    }
 
     suspend fun toggleBlock(session: AuthSession, otherUserId: String, blocked: Boolean) {
         rpc(
             "takt_toggle_block",
             JSONObject().put("p_other_user_id", otherUserId).put("p_blocked", blocked),
+            session,
+        )
+    }
+
+    suspend fun listBlockedUsers(session: AuthSession): List<BlockedUser> {
+        val items = rpcArray("takt_list_blocked_users", JSONObject(), session)
+        return buildList {
+            for (index in 0 until items.length()) add(items.getJSONObject(index).toBlockedUser())
+        }
+    }
+
+    suspend fun getPrivacy(session: AuthSession): PrivacySettings =
+        rpc("takt_get_privacy", JSONObject(), session).toPrivacySettings()
+
+    suspend fun updatePrivacy(session: AuthSession, settings: PrivacySettings): PrivacySettings = rpc(
+        "takt_update_privacy_settings",
+        JSONObject()
+            .put("p_show_avatar_to", settings.showAvatarTo)
+            .put("p_show_last_seen_to", settings.showLastSeenTo)
+            .put("p_allow_calls_from", settings.allowCallsFrom)
+            .put("p_allow_group_invites_from", settings.allowGroupInvitesFrom)
+            .put("p_allow_messages_from", settings.allowMessagesFrom),
+        session,
+    ).toPrivacySettings()
+
+    suspend fun searchMessages(session: AuthSession, query: String): List<MessageSearchResult> {
+        val items = rpcArray("takt_search_messages", JSONObject().put("p_query", query), session)
+        return buildList {
+            for (index in 0 until items.length()) add(items.getJSONObject(index).toMessageSearchResult())
+        }
+    }
+
+    suspend fun submitReport(session: AuthSession, targetUserId: String, reason: String) {
+        rpc(
+            "takt_submit_report",
+            JSONObject().put("p_target_user_id", targetUserId).put("p_reason", reason),
             session,
         )
     }

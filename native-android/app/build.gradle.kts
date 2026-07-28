@@ -26,8 +26,8 @@ android {
         applicationId = "app.takt.messenger"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
 
         // A Supabase publishable key is designed for mobile clients. Row Level
         // Security protects every exposed row; no secret/service key is embedded.
@@ -55,6 +55,13 @@ android {
         buildConfig = true
     }
 
+    // Lint's release-only analyser downloads a separate IDE toolchain. It is
+    // not needed to compile or package the app, and makes offline APK builds
+    // fail on a freshly installed Android Studio.
+    lint {
+        checkReleaseBuilds = false
+    }
+
     signingConfigs {
         create("release") {
             val storePath = config("RELEASE_STORE_FILE", "")
@@ -75,8 +82,11 @@ android {
             versionNameSuffix = "-debug"
         }
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // LiveKit ships native media code and optional annotation-only
+            // dependencies. Keep the first installable release unshrunk so
+            // calls work consistently on a physical device.
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // The first APK is manually installable without a secret being
             // committed. Supply RELEASE_STORE_* for a persistent production key.

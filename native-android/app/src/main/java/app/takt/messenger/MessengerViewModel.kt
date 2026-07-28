@@ -14,6 +14,7 @@ import app.takt.messenger.data.ApiException
 import app.takt.messenger.data.AppearanceSettings
 import app.takt.messenger.data.AuthSession
 import app.takt.messenger.data.AvatarShape
+import app.takt.messenger.data.BlockedUser
 import app.takt.messenger.data.BootstrapData
 import app.takt.messenger.data.CallHistoryItem
 import app.takt.messenger.data.ChatFolder
@@ -24,6 +25,8 @@ import app.takt.messenger.data.DownloadedAttachment
 import app.takt.messenger.data.MessengerMessage
 import app.takt.messenger.data.MessengerPreferences
 import app.takt.messenger.data.MessengerRepository
+import app.takt.messenger.data.MessageSearchResult
+import app.takt.messenger.data.PrivacySettings
 import app.takt.messenger.data.SecureSessionStore
 import app.takt.messenger.data.SignUpResult
 import app.takt.messenger.data.ThemeMode
@@ -41,9 +44,20 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.time.Instant
 import java.util.UUID
 
 enum class HomeSection { Chats, People, Calls, Settings }
+
+sealed interface HomeDestination {
+    data object None : HomeDestination
+    data object SelfProfile : HomeDestination
+    data object Privacy : HomeDestination
+    data object BlockedUsers : HomeDestination
+    data object Folders : HomeDestination
+    data object Search : HomeDestination
+    data class PersonProfile(val profile: UserProfile) : HomeDestination
+}
 
 sealed interface CallConnectionState {
     data object Idle : CallConnectionState
@@ -63,12 +77,20 @@ data class MessengerUiState(
     val profile: UserProfile? = null,
     val conversations: List<ConversationSummary> = emptyList(),
     val folders: List<ChatFolder> = emptyList(),
+    val privacy: PrivacySettings = PrivacySettings(),
+    val blockedUsers: List<BlockedUser> = emptyList(),
+    val messageSearchQuery: String = "",
+    val messageSearchResults: List<MessageSearchResult> = emptyList(),
+    val recentSearchQueries: List<String> = emptyList(),
+    val folderFilterId: String? = null,
+    val destination: HomeDestination = HomeDestination.None,
     val calls: List<CallHistoryItem> = emptyList(),
     val activeChat: ChatState? = null,
     val section: HomeSection = HomeSection.Chats,
     val appearance: AppearanceSettings = AppearanceSettings(),
     val people: List<UserProfile> = emptyList(),
     val peopleQuery: String = "",
+    val globalPeople: List<UserProfile> = emptyList(),
     val loading: Boolean = false,
     val busy: Boolean = false,
     val recording: Boolean = false,
@@ -82,6 +104,8 @@ data class MessengerUiState(
     val mediaPreview: MediaPreview? = null,
     val callState: CallConnectionState = CallConnectionState.Idle,
     val callMuted: Boolean = false,
+    val callCameraEnabled: Boolean = false,
+    val callScreenVisible: Boolean = false,
 )
 
 class MessengerViewModel(application: Application) : AndroidViewModel(application) {
@@ -101,6 +125,9 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
     private var pollJob: Job? = null
     private var recordingJob: Job? = null
     private var searchJob: Job? = null
+    private var messageSearchJob: Job? = null
+    private var globalPeopleSearchJob: Job? = null
+    private var pendingProfileLinkId: String? = null
 
     init {
         state.value.session?.let { resumeSession(it) }
@@ -116,6 +143,7 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
             sessions.save(session)
             _state.update { it.copy(session = session) }
             loadBootstrap(session)
+            pendingProfileLinkId?.let(::openPublicProfile)
         }
     }
 
@@ -157,7 +185,19 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun handleDeepLink(uri: Uri?) {
-        if (uri?.scheme != "takt" || uri.host != "auth" || uri.path != "/callback") return
+        if (uri?.scheme != "takt") return
+        if (uri.host == "user") {
+            val userId = uri.getQueryParameter("id")
+            if (userId.isNullOrBlank()) {
+                setError("Ссылка на профиль неполная")
+            } else {
+                pendingProfileLinkId = userId
+                state.value.session?.let { openPublicProfile(userId) }
+                    ?: _state.update { it.copy(notice = "Войдите, чтобы открыть профиль по ссылке") }
+            }
+            return
+        }
+        if (uri.host != "auth" || uri.path != "/callback") return
         val providerError = uri.getQueryParameter("error_description") ?: uri.getQueryParameter("error")
         if (!providerError.isNullOrBlank()) {
             setError("Google-вход не завершён: $providerError")
@@ -192,6 +232,17 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
         sessions.save(session)
         _state.update { it.copy(session = session, busy = false, confirmationEmail = null, error = null) }
         loadBootstrap(session)
+        pendingProfileLinkId?.let(::openPublicProfile)
+    }
+
+    private fun openPublicProfile(userId: String) {
+        val session = state.value.session ?: return
+        pendingProfileLinkId = null
+        viewModelScope.launch {
+            runCatching { repository.getPublicProfile(session, userId) }
+                .onSuccess { profile -> _state.update { it.copy(destination = HomeDestination.PersonProfile(profile), error = null) } }
+                .onFailure { error -> setError(friendlyError(error)) }
+        }
     }
 
     fun refresh() {
@@ -203,7 +254,10 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null) }
             runCatching { repository.bootstrap(session) }
-                .onSuccess(::applyBootstrap)
+                .onSuccess { data ->
+                    applyBootstrap(data)
+                    loadAccountControls(session)
+                }
                 .onFailure { error -> _state.update { it.copy(loading = false, error = friendlyError(error)) } }
         }
     }
@@ -221,7 +275,121 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private fun loadAccountControls(session: AuthSession) {
+        viewModelScope.launch {
+            runCatching { repository.getPrivacy(session) }
+                .onSuccess { privacy -> _state.update { it.copy(privacy = privacy) } }
+        }
+        loadBlockedUsers(session)
+    }
+
+    private fun loadBlockedUsers(session: AuthSession? = state.value.session) {
+        val activeSession = session ?: return
+        viewModelScope.launch {
+            runCatching { repository.listBlockedUsers(activeSession) }
+                .onSuccess { users -> _state.update { it.copy(blockedUsers = users) } }
+                .onFailure { error -> _state.update { it.copy(error = friendlyError(error)) } }
+        }
+    }
+
     fun selectSection(section: HomeSection) = _state.update { it.copy(section = section, error = null) }
+
+    fun openDestination(destination: HomeDestination) {
+        _state.update { it.copy(destination = destination, error = null) }
+        if (destination == HomeDestination.BlockedUsers) loadBlockedUsers()
+    }
+
+    fun closeDestination() = _state.update {
+        it.copy(
+            destination = HomeDestination.None,
+            messageSearchQuery = "",
+            messageSearchResults = emptyList(),
+            globalPeople = emptyList(),
+        )
+    }
+
+    fun toggleBlock(profile: UserProfile, blocked: Boolean) {
+        val session = state.value.session ?: return
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, error = null) }
+            runCatching { repository.toggleBlock(session, profile.id, blocked) }
+                .onSuccess {
+                    _state.update { state ->
+                        val nextBlocked = if (blocked) {
+                            (state.blockedUsers.filterNot { it.profile.id == profile.id } + BlockedUser(profile)).sortedBy { it.profile.displayName.lowercase() }
+                        } else {
+                            state.blockedUsers.filterNot { it.profile.id == profile.id }
+                        }
+                        state.copy(blockedUsers = nextBlocked, busy = false, notice = if (blocked) "Пользователь добавлен в чёрный список" else "Пользователь разблокирован")
+                    }
+                }
+                .onFailure { error -> _state.update { it.copy(busy = false, error = friendlyError(error)) } }
+        }
+    }
+
+    fun savePrivacy(settings: PrivacySettings) {
+        val session = state.value.session ?: return
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, error = null) }
+            runCatching { repository.updatePrivacy(session, settings) }
+                .onSuccess { saved -> _state.update { it.copy(privacy = saved, busy = false, notice = "Настройки приватности сохранены") } }
+                .onFailure { error -> _state.update { it.copy(busy = false, error = friendlyError(error)) } }
+        }
+    }
+
+    fun updateMessageSearch(query: String) {
+        _state.update { it.copy(messageSearchQuery = query) }
+        messageSearchJob?.cancel()
+        globalPeopleSearchJob?.cancel()
+        globalPeopleSearchJob?.cancel()
+        if (query.trim().length < 2) {
+            _state.update { it.copy(messageSearchResults = emptyList(), globalPeople = emptyList()) }
+            return
+        }
+        val session = state.value.session ?: return
+        messageSearchJob = viewModelScope.launch {
+            delay(250)
+            runCatching { repository.searchMessages(session, query) }
+                .onSuccess { matches ->
+                    _state.update {
+                        it.copy(
+                            messageSearchResults = matches,
+                            recentSearchQueries = (listOf(query.trim()) + it.recentSearchQueries.filterNot { previous -> previous.equals(query.trim(), ignoreCase = true) }).take(8),
+                        )
+                    }
+                }
+                .onFailure { error -> _state.update { it.copy(error = friendlyError(error)) } }
+        }
+        globalPeopleSearchJob = viewModelScope.launch {
+            delay(250)
+            runCatching { repository.searchPeople(session, query) }
+                .onSuccess { people -> _state.update { it.copy(globalPeople = people) } }
+        }
+    }
+
+    fun clearRecentSearches() = _state.update { it.copy(recentSearchQueries = emptyList()) }
+
+    fun showFolderChats(folderId: String?) {
+        _state.update { it.copy(folderFilterId = folderId, section = HomeSection.Chats, destination = HomeDestination.None) }
+    }
+
+    fun openSearchResult(result: MessageSearchResult) {
+        closeDestination()
+        openChat(result.conversationId)
+    }
+
+    fun submitReport(profile: UserProfile, reason: String) {
+        val session = state.value.session ?: return
+        if (reason.trim().length < 3) {
+            setError("Укажите причину жалобы минимум из 3 символов")
+            return
+        }
+        viewModelScope.launch {
+            runCatching { repository.submitReport(session, profile.id, reason) }
+                .onSuccess { _state.update { it.copy(notice = "Жалоба отправлена") } }
+                .onFailure { error -> setError(friendlyError(error)) }
+        }
+    }
 
     fun openChat(conversationId: String) {
         val session = state.value.session ?: return
@@ -308,6 +476,22 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
     fun setForward(message: MessengerMessage?) = _state.update { it.copy(forwarding = message, replyingTo = null, editing = null) }
 
     fun setEditing(message: MessengerMessage?) = _state.update { it.copy(editing = message, replyingTo = null, forwarding = null) }
+
+    fun forwardMessageTo(conversationId: String) {
+        val session = state.value.session ?: return
+        val original = state.value.forwarding ?: return
+        if (conversationId == state.value.activeChat?.id) {
+            setError("Выберите другой чат для пересылки")
+            return
+        }
+        val body = original.body.ifBlank { if (original.kind == "image") "Фотография" else "Пересланное сообщение" }
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, error = null) }
+            runCatching { repository.sendText(session, conversationId, body, forwardedFromId = original.id) }
+                .onSuccess { _state.update { it.copy(busy = false, forwarding = null, notice = "Сообщение переслано") } }
+                .onFailure { error -> _state.update { it.copy(busy = false, error = friendlyError(error)) } }
+        }
+    }
 
     fun sendText(text: String) {
         val session = state.value.session ?: return
@@ -442,11 +626,41 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun setPinned(archived: Boolean? = null, pinned: Boolean? = null, draft: String? = null) {
+    fun setPinned(
+        archived: Boolean? = null,
+        pinned: Boolean? = null,
+        folderId: String? = null,
+        mutedUntil: String? = null,
+        draft: String? = null,
+    ) {
+        val patch = JSONObject()
+        archived?.let { patch.put("is_archived", it) }
+        pinned?.let { patch.put("is_pinned", it) }
+        folderId?.let { patch.put("folder_id", it) }
+        mutedUntil?.let { patch.put("muted_until", it) }
+        draft?.let { patch.put("draft_text", it) }
+        patchCurrentChat(patch)
+    }
+
+    fun assignCurrentChatFolder(folderId: String) = setPinned(folderId = folderId)
+
+    fun muteCurrentChat(hours: Long = 8) = setPinned(mutedUntil = Instant.now().plusSeconds(hours * 3600).toString())
+
+    fun unmuteCurrentChat() = patchCurrentChat(JSONObject().put("muted_until", JSONObject.NULL))
+
+    fun clearCurrentChatFolder() = patchCurrentChat(JSONObject().put("folder_id", JSONObject.NULL))
+
+    fun saveCurrentDraft(draft: String) {
+        if (draft == state.value.activeChat?.settings?.draft) return
+        setPinned(draft = draft.take(4_000))
+    }
+
+    private fun patchCurrentChat(patch: JSONObject) {
         val session = state.value.session ?: return
         val chat = state.value.activeChat ?: return
+        if (patch.length() == 0) return
         viewModelScope.launch {
-            runCatching { repository.updateChatSettings(session, chat.id, archived, pinned, draft) }
+            runCatching { repository.patchChatSettings(session, chat.id, patch) }
                 .onSuccess { updated -> _state.update { it.copy(activeChat = updated) } }
                 .onFailure { setError(friendlyError(it)) }
         }
@@ -487,12 +701,37 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun createFolder(name: String) {
+    fun createFolder(name: String, color: String = "#5ED8C7") {
         val session = state.value.session ?: return
         viewModelScope.launch {
-            runCatching { repository.createFolder(session, name) }
+            runCatching { repository.createFolder(session, name, color) }
                 .onSuccess { folder -> _state.update { it.copy(folders = it.folders + folder, notice = "Папка создана") } }
                 .onFailure { setError(friendlyError(it)) }
+        }
+    }
+
+    fun updateFolder(folder: ChatFolder) {
+        val session = state.value.session ?: return
+        viewModelScope.launch {
+            runCatching { repository.updateFolder(session, folder) }
+                .onSuccess { saved ->
+                    _state.update { state ->
+                        state.copy(
+                            folders = state.folders.map { if (it.id == saved.id) saved else it }.sortedBy(ChatFolder::position),
+                            notice = "Папка сохранена",
+                        )
+                    }
+                }
+                .onFailure { error -> setError(friendlyError(error)) }
+        }
+    }
+
+    fun deleteFolder(folder: ChatFolder) {
+        val session = state.value.session ?: return
+        viewModelScope.launch {
+            runCatching { repository.deleteFolder(session, folder.id) }
+                .onSuccess { _state.update { it.copy(folders = it.folders.filterNot { current -> current.id == folder.id }, notice = "Папка удалена") } }
+                .onFailure { error -> setError(friendlyError(error)) }
         }
     }
 
@@ -508,16 +747,36 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
     fun startCall(video: Boolean) {
         val session = state.value.session ?: return
         val chat = state.value.activeChat ?: return
+        connectCall(session, chat, video)
+    }
+
+    fun startDirectCall(profile: UserProfile, video: Boolean) {
+        val session = state.value.session ?: return
+        if (state.value.busy || state.value.callState !is CallConnectionState.Idle) return
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, error = null) }
+            runCatching { repository.openDirectChat(session, profile.id) }
+                .onSuccess { chat ->
+                    _state.update { it.copy(busy = false, activeChat = chat, destination = HomeDestination.None) }
+                    startPolling(chat.id)
+                    refresh()
+                    connectCall(session, chat, video)
+                }
+                .onFailure { error -> _state.update { it.copy(busy = false, error = friendlyError(error)) } }
+        }
+    }
+
+    private fun connectCall(session: AuthSession, chat: ChatState, video: Boolean) {
         if (state.value.callState !is CallConnectionState.Idle) return
         viewModelScope.launch {
             _state.update { it.copy(callState = CallConnectionState.Connecting, error = null) }
             runCatching {
                 val call = repository.startCall(session, chat.id, video)
                 val token = repository.getLiveKitToken(session, call.id)
-                calls.connect(app.takt.messenger.data.CallCredentials(token.serverUrl, token.token))
-                CallForegroundService.start(getApplication())
+                calls.connect(app.takt.messenger.data.CallCredentials(token.serverUrl, token.token), enableVideo = video)
+                CallForegroundService.start(getApplication(), video)
                 call
-            }.onSuccess { call -> _state.update { it.copy(callState = CallConnectionState.Connected(call)) } }
+            }.onSuccess { call -> _state.update { it.copy(callState = CallConnectionState.Connected(call), callCameraEnabled = video, callScreenVisible = true) } }
                 .onFailure { error ->
                     _state.update { it.copy(callState = CallConnectionState.Idle, error = friendlyError(error)) }
                 }
@@ -531,6 +790,22 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
         _state.update { it.copy(callMuted = muted, notice = if (muted) "Микрофон выключен" else "Микрофон включён") }
     }
 
+    fun toggleCamera() {
+        if (state.value.callState !is CallConnectionState.Connected) return
+        val enabled = !state.value.callCameraEnabled
+        viewModelScope.launch {
+            runCatching { calls.setCameraEnabled(enabled) }
+                .onSuccess { _state.update { it.copy(callCameraEnabled = enabled, notice = if (enabled) "Камера включена" else "Камера выключена") } }
+                .onFailure { error -> setError(friendlyError(error)) }
+        }
+    }
+
+    fun openCallScreen() = _state.update { it.copy(callScreenVisible = true) }
+
+    fun closeCallScreen() = _state.update { it.copy(callScreenVisible = false) }
+
+    fun currentCallRoom() = calls.currentRoom()
+
     fun endCall() {
         val session = state.value.session
         val active = state.value.callState as? CallConnectionState.Connected
@@ -538,7 +813,7 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
             runCatching { calls.disconnect() }
             CallForegroundService.stop(getApplication())
             if (session != null && active != null) runCatching { repository.endCall(session, active.call.id) }
-            _state.update { it.copy(callState = CallConnectionState.Idle, callMuted = false) }
+            _state.update { it.copy(callState = CallConnectionState.Idle, callMuted = false, callCameraEnabled = false, callScreenVisible = false) }
         }
     }
 
@@ -546,6 +821,8 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
         val session = state.value.session
         pollJob?.cancel()
         recordingJob?.cancel()
+        messageSearchJob?.cancel()
+        globalPeopleSearchJob?.cancel()
         recorder.stop(cancel = true)
         endCall()
         if (session != null) viewModelScope.launch { runCatching { repository.signOut(session) } }
@@ -556,6 +833,8 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
     fun clearError() = _state.update { it.copy(error = null) }
     fun clearNotice() = _state.update { it.copy(notice = null) }
     fun clearConfirmation() = _state.update { it.copy(confirmationEmail = null) }
+    fun showError(message: String) = setError(message)
+    fun showNotice(message: String) = _state.update { it.copy(notice = message) }
 
     private fun appendMessage(message: MessengerMessage) {
         _state.update { state ->
@@ -637,6 +916,7 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
         super.onCleared()
         pollJob?.cancel()
         recordingJob?.cancel()
+        messageSearchJob?.cancel()
         recorder.stop(cancel = true)
     }
 

@@ -16,6 +16,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
 
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <application
         android:name=".TaktApplication"
@@ -51,6 +52,12 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="takt" android:host="user" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="takt" android:host="auth" android:pathPrefix="/callback" />
             </intent-filter>
         </activity>
@@ -66,7 +73,7 @@
         <service
             android:name=".call.CallForegroundService"
             android:exported="false"
-            android:foregroundServiceType="microphone"
+            android:foregroundServiceType="microphone|camera"
             android:stopWithTask="false" />
     </application>
 </manifest>
