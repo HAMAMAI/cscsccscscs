@@ -26,6 +26,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.People
@@ -520,9 +522,14 @@ internal fun ActiveCallBar(muted: Boolean, onOpen: () -> Unit, onToggleMute: () 
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f).clickable(onClick = onOpen)) {
                 Text("Активный звонок", fontWeight = FontWeight.Bold)
-                Text("Можно продолжать переписку", style = MaterialTheme.typography.bodySmall)
+                Text(if (muted) "Микрофон выключен" else "Можно продолжать переписку", style = MaterialTheme.typography.bodySmall)
             }
-            IconButton(onClick = onToggleMute) { Icon(if (muted) Icons.Default.Call else Icons.Default.Call, "Микрофон") }
+            IconButton(onClick = onToggleMute) {
+                Icon(
+                    if (muted) Icons.Default.MicOff else Icons.Default.Mic,
+                    if (muted) "Включить микрофон" else "Выключить микрофон",
+                )
+            }
             IconButton(onClick = onEnd) { Icon(Icons.Default.Close, "Завершить") }
         }
     }

@@ -1,5 +1,6 @@
 package app.takt.messenger.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -68,6 +69,8 @@ internal fun TaktCallScreen(
     onToggleCamera: () -> Unit,
     onEnd: () -> Unit,
 ) {
+    // Back only minimizes the in-call view; the call keeps running until ended.
+    BackHandler(onBack = onBack)
     Scaffold(
         containerColor = Color(0xFF0C131A),
         topBar = {

@@ -82,6 +82,7 @@ data class MessengerUiState(
     val messageSearchQuery: String = "",
     val messageSearchResults: List<MessageSearchResult> = emptyList(),
     val recentSearchQueries: List<String> = emptyList(),
+    val searchTargetMessageId: String? = null,
     val folderFilterId: String? = null,
     val destination: HomeDestination = HomeDestination.None,
     val calls: List<CallHistoryItem> = emptyList(),
@@ -374,9 +375,12 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun openSearchResult(result: MessageSearchResult) {
+        _state.update { it.copy(searchTargetMessageId = result.message.id) }
         closeDestination()
         openChat(result.conversationId)
     }
+
+    fun clearSearchTarget() = _state.update { it.copy(searchTargetMessageId = null) }
 
     fun submitReport(profile: UserProfile, reason: String) {
         val session = state.value.session ?: return
@@ -408,7 +412,7 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun closeChat() {
         pollJob?.cancel()
-        _state.update { it.copy(activeChat = null, replyingTo = null, forwarding = null, editing = null, mediaPreview = null) }
+        _state.update { it.copy(activeChat = null, replyingTo = null, forwarding = null, editing = null, mediaPreview = null, searchTargetMessageId = null) }
         refresh()
     }
 
@@ -661,7 +665,16 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
         if (patch.length() == 0) return
         viewModelScope.launch {
             runCatching { repository.patchChatSettings(session, chat.id, patch) }
-                .onSuccess { updated -> _state.update { it.copy(activeChat = updated) } }
+                .onSuccess { updated ->
+                    _state.update { state ->
+                        state.copy(
+                            activeChat = updated,
+                            conversations = state.conversations.map { summary ->
+                                if (summary.id == updated.id) summary.copy(settings = updated.settings) else summary
+                            },
+                        )
+                    }
+                }
                 .onFailure { setError(friendlyError(it)) }
         }
     }
@@ -730,7 +743,22 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
         val session = state.value.session ?: return
         viewModelScope.launch {
             runCatching { repository.deleteFolder(session, folder.id) }
-                .onSuccess { _state.update { it.copy(folders = it.folders.filterNot { current -> current.id == folder.id }, notice = "Папка удалена") } }
+                .onSuccess {
+                    _state.update { state ->
+                        state.copy(
+                            folders = state.folders.filterNot { current -> current.id == folder.id },
+                            conversations = state.conversations.map { summary ->
+                                if (summary.settings.folderId == folder.id) {
+                                    summary.copy(settings = summary.settings.copy(folderId = null))
+                                } else summary
+                            },
+                            activeChat = state.activeChat?.let { chat ->
+                                if (chat.settings.folderId == folder.id) chat.copy(settings = chat.settings.copy(folderId = null)) else chat
+                            },
+                            notice = "Папка удалена",
+                        )
+                    }
+                }
                 .onFailure { error -> setError(friendlyError(error)) }
         }
     }
@@ -770,24 +798,48 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
         if (state.value.callState !is CallConnectionState.Idle) return
         viewModelScope.launch {
             _state.update { it.copy(callState = CallConnectionState.Connecting, error = null) }
-            runCatching {
+            var startedCall: ActiveCall? = null
+            try {
                 val call = repository.startCall(session, chat.id, video)
+                startedCall = call
                 val token = repository.getLiveKitToken(session, call.id)
                 calls.connect(app.takt.messenger.data.CallCredentials(token.serverUrl, token.token), enableVideo = video)
                 CallForegroundService.start(getApplication(), video)
-                call
-            }.onSuccess { call -> _state.update { it.copy(callState = CallConnectionState.Connected(call), callCameraEnabled = video, callScreenVisible = true) } }
-                .onFailure { error ->
-                    _state.update { it.copy(callState = CallConnectionState.Idle, error = friendlyError(error)) }
+                _state.update { it.copy(callState = CallConnectionState.Connected(call), callCameraEnabled = video, callScreenVisible = true) }
+            } catch (error: Throwable) {
+                // A server-side call was created before token issuance/connect.
+                // End it again on any client failure so the peer never sees a ghost call.
+                runCatching { calls.disconnect() }
+                CallForegroundService.stop(getApplication())
+                startedCall?.let { call -> runCatching { repository.endCall(session, call.id) } }
+                _state.update {
+                    it.copy(
+                        callState = CallConnectionState.Idle,
+                        callMuted = false,
+                        callCameraEnabled = false,
+                        callScreenVisible = false,
+                        error = friendlyError(error),
+                    )
                 }
+            }
         }
     }
 
     fun toggleMute() {
         if (state.value.callState !is CallConnectionState.Connected) return
         val muted = !state.value.callMuted
-        viewModelScope.launch { calls.setMuted(muted) }
-        _state.update { it.copy(callMuted = muted, notice = if (muted) "Микрофон выключен" else "Микрофон включён") }
+        viewModelScope.launch {
+            runCatching { calls.setMuted(muted) }
+                .onSuccess { actualMuted ->
+                    _state.update {
+                        it.copy(
+                            callMuted = actualMuted,
+                            notice = if (actualMuted) "Микрофон выключен" else "Микрофон включён",
+                        )
+                    }
+                }
+                .onFailure { error -> setError(friendlyError(error)) }
+        }
     }
 
     fun toggleCamera() {
@@ -906,6 +958,7 @@ class MessengerViewModel(application: Application) : AndroidViewModel(applicatio
             code.contains("username_taken") || message.contains("USERNAME_TAKEN") -> "Этот username уже занят. Выберите другой."
             code.contains("username_invalid") || message.contains("USERNAME_INVALID") -> "Username: 5-32 символа, только латинские буквы, цифры и _."
             code.contains("user_blocked") || message.contains("USER_BLOCKED") -> "Действие недоступно: один из пользователей заблокировал другого."
+            code.contains("group_invites_restricted") || message.contains("GROUP_INVITES_RESTRICTED") -> "Этот пользователь запретил приглашения в группы."
             code.contains("call_server_not_configured") || message.contains("CALL_SERVER_NOT_CONFIGURED") -> "Звонки станут доступны после подключения LiveKit token-сервера."
             message.isNotBlank() -> message
             else -> "Не удалось выполнить действие. Проверьте интернет и повторите."

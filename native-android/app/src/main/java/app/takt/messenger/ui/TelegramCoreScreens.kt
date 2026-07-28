@@ -678,7 +678,7 @@ fun TaktGlobalSearchScreen(
             query.isBlank() -> TaktEmptyState(
                 icon = Icons.Default.Search,
                 title = "Найдите нужное",
-                subtitle = "Ищите чаты, людей, файлы и слова из сообщений.",
+                subtitle = "Ищите чаты, людей и слова из сообщений.",
                 modifier = Modifier.padding(padding),
             )
             query.isNotBlank() && results.isEmpty() -> TaktEmptyState(
@@ -812,13 +812,23 @@ private fun TaktAudienceDialog(
     onDismiss: () -> Unit,
     onConfirm: (TaktPrivacyAudience) -> Unit,
 ) {
-    var current by remember(selected) { mutableStateOf(selected) }
+    // The server has no contacts graph yet. Treat an old "contacts" setting
+    // conservatively as "nobody" instead of presenting a permission that
+    // cannot be honoured.
+    var current by remember(selected) {
+        mutableStateOf(if (selected == TaktPrivacyAudience.Contacts) TaktPrivacyAudience.Nobody else selected)
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                TaktPrivacyAudience.entries.forEach { audience ->
+                Text(
+                    "Синхронизация контактов пока не подключена: доступны только «Все» и «Никто».",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                listOf(TaktPrivacyAudience.Everyone, TaktPrivacyAudience.Nobody).forEach { audience ->
                     AssistChip(
                         onClick = { current = audience },
                         label = { Text(audience.title) },

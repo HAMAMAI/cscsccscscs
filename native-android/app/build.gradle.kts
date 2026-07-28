@@ -26,8 +26,8 @@ android {
         applicationId = "app.takt.messenger"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
 
         // A Supabase publishable key is designed for mobile clients. Row Level
         // Security protects every exposed row; no secret/service key is embedded.

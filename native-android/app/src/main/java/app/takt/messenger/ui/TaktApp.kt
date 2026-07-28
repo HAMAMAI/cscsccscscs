@@ -3,6 +3,7 @@ package app.takt.messenger.ui
 import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.media.MediaPlayer
@@ -10,10 +11,12 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.core.content.FileProvider
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -29,6 +32,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -138,6 +142,7 @@ fun TaktApp(viewModel: MessengerViewModel) {
                 onDelete = viewModel::deleteMessage,
                 onReact = viewModel::react,
                 onOpenMedia = viewModel::openMedia,
+                onSearchTargetConsumed = viewModel::clearSearchTarget,
                 onUpdateTyping = viewModel::updateTyping,
                 onSaveDraft = viewModel::saveCurrentDraft,
                 onPin = { viewModel.setPinned(pinned = !(state.activeChat?.settings?.pinned ?: false)) },
@@ -145,6 +150,7 @@ fun TaktApp(viewModel: MessengerViewModel) {
                 onMute = viewModel::muteCurrentChat,
                 onUnmute = viewModel::unmuteCurrentChat,
                 onAssignFolder = viewModel::assignCurrentChatFolder,
+                onClearFolder = viewModel::clearCurrentChatFolder,
                 onOpenProfile = { profile -> viewModel.openDestination(HomeDestination.PersonProfile(profile)) },
                 onStartCall = { video -> requestCall(video, null) },
                 onOpenCall = viewModel::openCallScreen,
@@ -372,7 +378,9 @@ private fun UserProfile.toPersonProfileUi(state: MessengerUiState) = TaktPersonP
 )
 
 private fun String.toTaktAudience(): TaktPrivacyAudience = when (lowercase()) {
-    "contacts" -> TaktPrivacyAudience.Contacts
+    // Contacts is deliberately fail-closed until a real address-book model
+    // exists, so surface the honest equivalent in the UI.
+    "contacts" -> TaktPrivacyAudience.Nobody
     "nobody" -> TaktPrivacyAudience.Nobody
     else -> TaktPrivacyAudience.Everyone
 }
@@ -521,12 +529,58 @@ private fun MediaPreviewDialog(
                     }
 
                     else -> {
-                        Text("Файл открыт внутри приложения. Формат: $mimeType")
+                        Text("Файл готов к открытию. Формат: $mimeType")
                         Text("Размер: ${formatBytes(bytes.size)}", style = MaterialTheme.typography.bodySmall)
                     }
                 }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = { openPreviewExternally(context, title, mimeType, bytes, share = false) },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Открыть") }
+                    OutlinedButton(
+                        onClick = { openPreviewExternally(context, title, mimeType, bytes, share = true) },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Поделиться") }
+                }
             }
         }
+    }
+}
+
+private fun openPreviewExternally(
+    context: Context,
+    title: String,
+    mimeType: String,
+    bytes: ByteArray,
+    share: Boolean,
+) {
+    runCatching {
+        val directory = File(context.cacheDir, "attachments").apply { mkdirs() }
+        val safeTitle = title
+            .substringAfterLast('/')
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .take(80)
+            .ifBlank { "attachment" }
+        val file = File(directory, "${System.nanoTime()}-$safeTitle").apply { writeBytes(bytes) }
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+        val type = mimeType.ifBlank { "application/octet-stream" }
+        val intent = if (share) {
+            Intent(Intent.ACTION_SEND)
+                .setType(type)
+                .putExtra(Intent.EXTRA_STREAM, uri)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                .also { it.clipData = ClipData.newRawUri("attachment", uri) }
+        } else {
+            Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, type)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                .also { it.clipData = ClipData.newRawUri("attachment", uri) }
+        }
+        context.startActivity(Intent.createChooser(intent, if (share) "Поделиться файлом" else "Открыть файл"))
     }
 }
 

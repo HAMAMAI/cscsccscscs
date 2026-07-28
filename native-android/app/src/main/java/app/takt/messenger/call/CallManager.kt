@@ -38,8 +38,13 @@ class CallManager(context: Context) {
         }
     }
 
-    suspend fun setMuted(muted: Boolean) {
-        room?.localParticipant?.setMicrophoneEnabled(!muted)
+    /** Returns the actual microphone state after the LiveKit operation succeeds. */
+    suspend fun setMuted(muted: Boolean): Boolean {
+        val active = checkNotNull(room) { "Звонок уже завершён" }
+        check(active.localParticipant.setMicrophoneEnabled(!muted)) {
+            "Не удалось изменить состояние микрофона"
+        }
+        return !active.localParticipant.isMicrophoneEnabled
     }
 
     /** Enables or disables the local camera without leaving the call. */

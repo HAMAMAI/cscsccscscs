@@ -1,6 +1,7 @@
 package app.takt.messenger.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -12,12 +13,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -68,6 +73,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.takt.messenger.CallConnectionState
@@ -75,6 +81,7 @@ import app.takt.messenger.MessengerUiState
 import app.takt.messenger.data.DeliveryStatus
 import app.takt.messenger.data.MessengerMessage
 import app.takt.messenger.data.UserProfile
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -93,6 +100,7 @@ fun ChatScreen(
     onDelete: (MessengerMessage, Boolean) -> Unit,
     onReact: (MessengerMessage, String) -> Unit,
     onOpenMedia: (MessengerMessage) -> Unit,
+    onSearchTargetConsumed: () -> Unit,
     onUpdateTyping: () -> Unit,
     onSaveDraft: (String) -> Unit,
     onPin: () -> Unit,
@@ -100,6 +108,7 @@ fun ChatScreen(
     onMute: () -> Unit,
     onUnmute: () -> Unit,
     onAssignFolder: (String) -> Unit,
+    onClearFolder: () -> Unit,
     onOpenProfile: (UserProfile) -> Unit,
     onStartCall: (Boolean) -> Unit,
     onOpenCall: () -> Unit,
@@ -110,6 +119,8 @@ fun ChatScreen(
     var draft by rememberSaveable(chat.id) { mutableStateOf(chat.settings.draft) }
     var menuMessage by remember { mutableStateOf<MessengerMessage?>(null) }
     var showChatMenu by rememberSaveable { mutableStateOf(false) }
+    var showGroupInfo by rememberSaveable(chat.id) { mutableStateOf(false) }
+    val messageListState = rememberLazyListState()
     BackHandler {
         onSaveDraft(draft)
         onBack()
@@ -117,13 +128,24 @@ fun ChatScreen(
     LaunchedEffect(state.editing?.id) {
         state.editing?.let { draft = it.body }
     }
+    LaunchedEffect(chat.id, state.searchTargetMessageId, chat.messages.size) {
+        val targetId = state.searchTargetMessageId ?: return@LaunchedEffect
+        val index = chat.messages.indexOfFirst { it.id == targetId }
+        if (index >= 0) {
+            messageListState.animateScrollToItem(index)
+            delay(1_500)
+            onSearchTargetConsumed()
+        }
+    }
+    // IME padding belongs outside of bottomBar: padding the Composer itself
+    // makes Scaffold measure it as keyboard-height and shifts the input upward.
     Scaffold(
+        modifier = Modifier.imePadding(),
         topBar = {
             CenterAlignedTopAppBar(
                 title = {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.clickable {
+                    val titleModifier = when (chat.kind) {
+                        "direct" -> Modifier.clickable {
                             chat.members.firstOrNull { it.id != state.profile?.id }?.let { member ->
                                 onOpenProfile(
                                     UserProfile(
@@ -137,7 +159,14 @@ fun ChatScreen(
                                     ),
                                 )
                             }
-                        },
+                        }
+
+                        "group" -> Modifier.clickable { showGroupInfo = true }
+                        else -> Modifier
+                    }
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = titleModifier,
                     ) {
                         Text(chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
                         val typing = chat.typing.firstOrNull()
@@ -179,7 +208,7 @@ fun ChatScreen(
                 onRecord = onRecord,
                 onStopRecord = onStopRecord,
                 onCancelRecord = onCancelRecord,
-                onCancelContext = { onReply(null); onForward(null); onEdit(null); draft = "" },
+                onCancelContext = { onReply(null); onForward(null); onEdit(null) },
             )
         },
     ) { padding ->
@@ -195,6 +224,7 @@ fun ChatScreen(
                 IncomingCallBar(chat.activeCall.video, onJoin = { onStartCall(chat.activeCall.video) })
             }
             LazyColumn(
+                state = messageListState,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -211,6 +241,7 @@ fun ChatScreen(
                         message = message,
                         mine = message.senderId == state.profile?.id,
                         appearance = state.appearance,
+                        highlighted = message.id == state.searchTargetMessageId,
                         onMenu = { menuMessage = message },
                         onOpenMedia = { onOpenMedia(message) },
                         onReaction = { emoji -> onReact(message, emoji) },
@@ -248,9 +279,14 @@ fun ChatScreen(
                     TextButton(onClick = { if (chat.settings.mutedUntil == null) onMute() else onUnmute(); showChatMenu = false }, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Default.Mic, null); Spacer(Modifier.width(8.dp)); Text(if (chat.settings.mutedUntil == null) "Выключить звук на 8 часов" else "Включить звук")
                     }
-                    if (state.folders.isNotEmpty()) {
+                    if (state.folders.isNotEmpty() || chat.settings.folderId != null) {
                         HorizontalDivider()
                         Text("Переместить в папку", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 12.dp, top = 8.dp))
+                        if (chat.settings.folderId != null) {
+                            TextButton(onClick = { onClearFolder(); showChatMenu = false }, modifier = Modifier.fillMaxWidth()) {
+                                Icon(Icons.Default.Close, null); Spacer(Modifier.width(8.dp)); Text("Без папки")
+                            }
+                        }
                         state.folders.forEach { folder ->
                             TextButton(onClick = { onAssignFolder(folder.id); showChatMenu = false }, modifier = Modifier.fillMaxWidth()) {
                                 Icon(Icons.Default.PushPin, null); Spacer(Modifier.width(8.dp)); Text(folder.name)
@@ -260,6 +296,32 @@ fun ChatScreen(
                 }
             },
             confirmButton = { TextButton(onClick = { showChatMenu = false }) { Text("Закрыть") } },
+        )
+    }
+    if (showGroupInfo) {
+        AlertDialog(
+            onDismissRequest = { showGroupInfo = false },
+            title = { Text(chat.title) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Группа · ${chat.members.size} участников", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    chat.members.take(12).forEach { member ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Avatar(member.displayName, member.avatarColor, state.appearance, 32)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(member.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                val subtitle = member.username?.let { "@$it" } ?: member.role
+                                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                    if (chat.members.size > 12) {
+                        Text("Ещё ${chat.members.size - 12}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showGroupInfo = false }) { Text("Закрыть") } },
         )
     }
 }
@@ -284,6 +346,7 @@ private fun MessageBubble(
     message: MessengerMessage,
     mine: Boolean,
     appearance: app.takt.messenger.data.AppearanceSettings,
+    highlighted: Boolean,
     onMenu: () -> Unit,
     onOpenMedia: () -> Unit,
     onReaction: (String) -> Unit,
@@ -300,6 +363,7 @@ private fun MessageBubble(
                 color = if (mine) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
                 contentColor = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                 shape = if (mine) RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp) else RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp),
+                border = if (highlighted) BorderStroke(2.dp, MaterialTheme.colorScheme.tertiary) else null,
             ) {
                 Column(Modifier.padding(10.dp)) {
                     message.replyPreview?.let { reply ->
@@ -384,7 +448,12 @@ private fun Composer(
     onCancelContext: () -> Unit,
 ) {
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 4.dp) {
-        Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 8.dp, vertical = 7.dp)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 8.dp, vertical = 7.dp),
+        ) {
             val contextMessage = editing ?: replyingTo ?: forwarding
             if (contextMessage != null && !recording) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -414,6 +483,10 @@ private fun Composer(
                         modifier = Modifier.weight(1f),
                         placeholder = { Text("Сообщение") },
                         maxLines = 4,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(
+                            onSend = { if (draft.isNotBlank() && !busy) onSend() },
+                        ),
                         shape = RoundedCornerShape(22.dp),
                         colors = TextFieldDefaults.colors(
                             focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
