@@ -1,0 +1,46 @@
+name: Windows desktop app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - "infra/livekit/token-service/**"
+      - ".github/workflows/desktop.yml"
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "infra/livekit/token-service/**"
+      - ".github/workflows/desktop.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Takt for Windows
+    runs-on: windows-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install pinned dependencies
+        run: npm install --no-audit --no-fund
+      - name: Typecheck desktop client
+        run: npm run typecheck
+      - name: Build Windows installer
+        run: npm run package:win
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: takt-windows-installer
+          path: desktop/release/Takt-Setup-*.exe
+          if-no-files-found: error
+          retention-days: 30
