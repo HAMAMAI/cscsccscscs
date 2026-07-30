@@ -4,6 +4,8 @@ node_modules/
 .env*
 !.env.example
 npm-debug.log*
+desktop/dist/
+desktop/release/
 .DS_Store
 android-app/.toolchain/
 android-app/build/

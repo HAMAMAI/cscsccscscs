@@ -1,4 +1,5 @@
 import http from "node:http";
+import { randomUUID } from "node:crypto";
 import { AccessToken, TrackSource } from "livekit-server-sdk";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -39,6 +40,16 @@ function reply(response, status, body) {
 function bearerToken(header) {
   const match = /^Bearer\s+(.+)$/i.exec(String(header || ""));
   return match?.[1]?.trim() || null;
+}
+
+/**
+ * A LiveKit identity must be unique per connected participant. The authenticated
+ * user ID remains the authority prefix, while this per-installation ID lets one
+ * account join the same room from a phone and a PC at the same time.
+ */
+function participantDeviceId(header) {
+  const value = String(header || "").trim();
+  return UUID.test(value) ? value : randomUUID();
 }
 
 async function readJson(request) {
@@ -86,10 +97,16 @@ const server = http.createServer(async (request, response) => {
     const context = await callContext(accessToken, input.callId);
     if (!context) return reply(response, 403, { error: "Access denied" });
 
-    const sources = [TrackSource.MICROPHONE];
+    // Screen sharing belongs in voice calls too. A client can only obtain this
+    // token after RLS has verified it belongs to the chat/call session.
+    const sources = [
+      TrackSource.MICROPHONE,
+      TrackSource.SCREEN_SHARE,
+      TrackSource.SCREEN_SHARE_AUDIO,
+    ];
     if (context.is_video === true) sources.push(TrackSource.CAMERA);
     const token = new AccessToken(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET, {
-      identity: context.identity,
+      identity: `${context.identity}:${participantDeviceId(request.headers["x-takt-device-id"])}`,
       name: String(context.display_name || "Takt user").slice(0, 128),
       ttl: "10m",
     });

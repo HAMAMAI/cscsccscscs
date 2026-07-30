@@ -6,7 +6,23 @@
 
 https://${CALL_DOMAIN} {
   tls /certs/live/${CALL_HOST}/fullchain.pem /certs/live/${CALL_HOST}/privkey.pem
+  @livekit_token_preflight {
+    method OPTIONS
+    path /api/livekit-token
+  }
+  handle @livekit_token_preflight {
+    header Access-Control-Allow-Origin "*"
+    header Access-Control-Allow-Methods "POST, OPTIONS"
+    header Access-Control-Allow-Headers "Authorization, Content-Type, X-Takt-Device-Id"
+    header Access-Control-Max-Age "600"
+    respond 204
+  }
   handle /api/livekit-token {
+    # Desktop Electron uses a file:// renderer and authenticates with a
+    # short-lived Bearer token. CORS only permits this one token endpoint.
+    header Access-Control-Allow-Origin "*"
+    header Access-Control-Allow-Methods "POST, OPTIONS"
+    header Access-Control-Allow-Headers "Authorization, Content-Type, X-Takt-Device-Id"
     reverse_proxy 127.0.0.1:7890
   }
   handle /health {
