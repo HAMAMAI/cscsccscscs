@@ -74,7 +74,8 @@ import type {
 
 type View = "messages" | "settings";
 type ConversationFilter = "all" | "unread" | "archived";
-type Notice = { tone: "error" | "success"; text: string } | null;
+type NoticeTone = "error" | "success";
+type Notice = { tone: NoticeTone; text: string } | null;
 type JoinedCall = { call: ActiveCall; title: string; conversationId: string };
 
 const idleCall: CallUiState = {
@@ -350,7 +351,7 @@ function App() {
   const uploadInput = useRef<HTMLInputElement>(null);
   const typingTimer = useRef<number | null>(null);
 
-  const showNotice = useCallback((tone: Notice["tone"], text: string) => {
+  const showNotice = useCallback((tone: NoticeTone, text: string) => {
     setNotice({ tone, text });
   }, []);
 
@@ -718,7 +719,7 @@ function App() {
 
   const profile = workspace?.profile;
   const memberCount = activeChat?.members.length ?? 0;
-  const activeCall = activeChat?.active_call ?? (joinedCall?.conversationId === activeChat?.id ? joinedCall.call : null);
+  const activeCall = activeChat?.active_call ?? (joinedCall && joinedCall.conversationId === activeChat?.id ? joinedCall.call : null);
 
   return (
     <main className="desktop-shell">
@@ -1102,7 +1103,7 @@ function App() {
                 <div className="member-row" key={member.id}>
                   <Avatar name={member.display_name} color={member.avatar_color} size="small" online={member.is_online} />
                   <span>{member.id === profile?.id ? "Вы" : member.display_name}</span>
-                  {member.role === "owner" && <ShieldCheck size={14} title="Создатель" />}
+                  {member.role === "owner" && <span title="Создатель"><ShieldCheck size={14} aria-hidden="true" /></span>}
                 </div>
               ))}
             </section>
