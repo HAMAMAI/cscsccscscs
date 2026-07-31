@@ -114,7 +114,16 @@ jobs:
         run: |
           ssh "$VPS_USER@$VPS_HOST" '
             cfg=/etc/haproxy/haproxy.cfg
-            if [ ! -r "$cfg" ]; then echo "haproxy_config=unavailable"; exit 0; fi
+            echo "haproxy_processes:"
+            for pid in $(pgrep -x haproxy || true); do
+              printf "pid=%s cmd=" "$pid"
+              tr "\\000" " " < "/proc/$pid/cmdline"
+              printf "\\n"
+            done
+            echo "haproxy_service:"
+            systemctl show haproxy -p FragmentPath -p ExecStart --no-pager 2>/dev/null || true
+            if [ ! -r "$cfg" ]; then exit 0; fi
+            echo "haproxy_rules:"
             awk "
               /^[[:space:]]*(frontend|backend|listen|bind|mode|acl|use_backend|default_backend|server|tcp-request)[[:space:]]/ {
                 line=\$0
