@@ -113,7 +113,8 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           ssh "$VPS_USER@$VPS_HOST" '
-            cfg=/usr/local/etc/haproxy/haproxy.cfg
+            haproxy_pid="$(pgrep -x haproxy | head -n 1 || true)"
+            cfg="/proc/$haproxy_pid/root/usr/local/etc/haproxy/haproxy.cfg"
             echo "haproxy_processes:"
             for pid in $(pgrep -x haproxy || true); do
               printf "pid=%s cmd=" "$pid"
