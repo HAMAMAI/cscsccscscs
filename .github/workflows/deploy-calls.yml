@@ -45,14 +45,23 @@ jobs:
             exit 0
           fi
           subdomain="${call_host%.duckdns.org}"
-          response="$(curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 \
+          response=""
+          if ! response="$(curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 \
             --get 'https://www.duckdns.org/update' \
             --data-urlencode "domains=$subdomain" \
             --data-urlencode "token=$DUCKDNS_TOKEN" \
-            --data-urlencode "ip=$VPS_HOST")"
+            --data-urlencode "ip=$VPS_HOST")"; then
+            response=""
+          fi
           if [[ "$response" != OK* ]]; then
-            echo "DuckDNS rejected the configured domain or token." >&2
-            exit 1
+            # A correctly set manual record is a safe fallback while the
+            # account token is being replaced; do not block a healthy deploy.
+            if getent ahostsv4 "$call_host" | awk '{print $1}' | grep -Fxq "$VPS_HOST"; then
+              echo "DuckDNS record already targets the VPS; continuing without API update."
+            else
+              echo "DuckDNS rejected the configured domain or token." >&2
+              exit 1
+            fi
           fi
 
       - name: Upload configuration
