@@ -15,7 +15,7 @@ const SUPABASE_PUBLISHABLE_KEY =
   import.meta.env.VITE_TAKT_SUPABASE_PUBLISHABLE_KEY ??
   "sb_publishable_oFE1KGP-BLnRJT_IaJ30Bg_eaFyPaf2";
 const CALL_TOKEN_URL =
-  import.meta.env.VITE_TAKT_CALL_TOKEN_URL ?? "https://call.195-123-6-26.sslip.io";
+  import.meta.env.VITE_TAKT_CALL_TOKEN_URL ?? "https://takt-call-1951236.duckdns.org:8443";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {

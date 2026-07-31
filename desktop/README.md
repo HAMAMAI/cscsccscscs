@@ -30,7 +30,7 @@ npm run package:win
 \`\`\`text
 VITE_TAKT_SUPABASE_URL=https://your-project.supabase.co
 VITE_TAKT_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
-VITE_TAKT_CALL_TOKEN_URL=https://call.example.com
+VITE_TAKT_CALL_TOKEN_URL=https://call.example.com:8443
 \`\`\`
 
 В desktop-клиент нельзя добавлять service-role ключ, приватный ключ LiveKit,

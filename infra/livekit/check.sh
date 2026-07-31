@@ -22,11 +22,11 @@ if ! curl --fail --silent --show-error \
   docker compose logs --tail=120 caddy token-service
   exit 1
 fi
-# HAProxy owns TCP 443 and must forward the call hostname to Caddy's isolated
-# HTTPS listener. Test that public client route without printing response data.
+# The public client endpoint is the dedicated HTTPS listener in CALL_DOMAIN.
+# Do not require the unrelated HAProxy service on TCP 443 to know this host.
 curl --fail --silent --show-error --connect-timeout 10 \
-  --resolve "${CALL_HOST}:443:127.0.0.1" \
-  "https://${CALL_HOST}/health" | grep -q '"ok":true'
+  --resolve "${CALL_DOMAIN}:127.0.0.1" \
+  "https://${CALL_DOMAIN}/health" | grep -q '"ok":true'
 openssl s_client -connect "127.0.0.1:5349" -servername "${TURN_DOMAIN}" </dev/null 2>/dev/null \
   | openssl x509 -noout -subject -issuer -dates
 docker compose ps
