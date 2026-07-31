@@ -55,10 +55,17 @@ export class DesktopCallClient {
     });
 
     try {
-      await room.connect(credentials.serverUrl, credentials.token);
-      // This is called from a user gesture, so Chromium may start remote audio.
-      await room.startAudio();
-      await room.localParticipant.setMicrophoneEnabled(true);
+      await this.withTimeout(
+        room.connect(credentials.serverUrl, credentials.token),
+        15_000,
+        "Не удалось подключиться к голосовому каналу за 15 секунд.",
+      );
+      // This is called from a user gesture, but an autoplay-policy failure must
+      // not eject an otherwise connected participant from the voice room.
+      await room.startAudio().catch(() => undefined);
+      // A rejected microphone permission must not eject the user from a room.
+      // They remain connected and may enable it later from the mute control.
+      await room.localParticipant.setMicrophoneEnabled(true).catch(() => undefined);
       this.publishState();
     } catch (error) {
       if (this.room === room) this.room = null;
@@ -103,6 +110,18 @@ export class DesktopCallClient {
   private requireRoom(): Room {
     if (!this.room) throw new Error("Сначала подключитесь к голосовому каналу");
     return this.room;
+  }
+
+  private async withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+    let timeout: number | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timeout = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    });
+    try {
+      return await Promise.race([operation, deadline]);
+    } finally {
+      if (timeout !== undefined) window.clearTimeout(timeout);
+    }
   }
 
   private attachAudio(track: RemoteTrack): void {

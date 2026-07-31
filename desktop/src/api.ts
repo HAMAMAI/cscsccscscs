@@ -190,15 +190,28 @@ export async function getCallCredentials(callId: string): Promise<CallCredential
   if (!session?.access_token) throw new Error("Сессия входа истекла. Войдите снова.");
 
   const endpoint = CALL_TOKEN_URL.replace(/\/$/, "");
-  const response = await fetch(endpoint + "/api/livekit-token", {
-    method: "POST",
-    headers: {
-      Authorization: "Bearer " + session.access_token,
-      "Content-Type": "application/json",
-      "X-Takt-Device-Id": getDeviceId(),
-    },
-    body: JSON.stringify({ callId }),
-  });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 15_000);
+  let response: Response;
+  try {
+    response = await fetch(endpoint + "/api/livekit-token", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + session.access_token,
+        "Content-Type": "application/json",
+        "X-Takt-Device-Id": getDeviceId(),
+      },
+      body: JSON.stringify({ callId }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Сервер звонков не ответил за 15 секунд. Попробуйте ещё раз.");
+    }
+    throw new Error("Не удалось связаться с сервером звонков.");
+  } finally {
+    window.clearTimeout(timeout);
+  }
   const payload = (await response.json().catch(() => ({}))) as Partial<CallCredentials & { error: string }>;
   if (!response.ok || !payload.serverUrl || !payload.token) {
     throw new Error(payload.error ?? "Не удалось получить доступ к звонку");
