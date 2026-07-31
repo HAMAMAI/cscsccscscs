@@ -106,36 +106,6 @@ jobs:
         run: |
           ssh "$VPS_USER@$VPS_HOST" 'cd /opt/takt/livekit && docker compose ps --all && docker compose logs --tail=120 token-service livekit caddy'
 
-      - name: Inspect HAProxy call routing
-        if: always()
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-        run: |
-          ssh "$VPS_USER@$VPS_HOST" '
-            haproxy_pid="$(pgrep -x haproxy | head -n 1 || true)"
-            cfg="/proc/$haproxy_pid/root/usr/local/etc/haproxy/haproxy.cfg"
-            echo "haproxy_processes:"
-            for pid in $(pgrep -x haproxy || true); do
-              printf "pid=%s cmd=" "$pid"
-              tr "\\000" " " < "/proc/$pid/cmdline"
-              printf "\\n"
-            done
-            echo "haproxy_service:"
-            systemctl show haproxy -p FragmentPath -p ExecStart --no-pager 2>/dev/null || true
-            if [ ! -r "$cfg" ]; then exit 0; fi
-            echo "haproxy_rules:"
-            awk "
-              /^[[:space:]]*(frontend|backend|listen|bind|mode|acl|use_backend|default_backend|server|tcp-request)[[:space:]]/ {
-                line=\$0
-                sub(/[[:space:]]*#.*/, \"\", line)
-                gsub(/[0-9][0-9.]*\.[0-9.]+/, \"<ip>\", line)
-                gsub(/(password|token|secret)=[^[:space:]]+/, \"\\1=<redacted>\", line)
-                print NR \":\" line
-              }
-            " "$cfg"
-          '
-
       - name: Verify public endpoints
         env:
           CALL_DOMAIN: ${{ secrets.CALL_DOMAIN }}

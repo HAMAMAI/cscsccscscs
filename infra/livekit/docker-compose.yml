@@ -11,10 +11,9 @@ services:
       SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY}
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
-      # Caddy terminates TLS on the dedicated :8443 listener. The clients use
-      # the full CALL_DOMAIN directly, avoiding a conflicting HAProxy listener
-      # on TCP 443 and a network-filtered legacy hostname.
-      LIVEKIT_WS_URL: wss://${CALL_DOMAIN}
+      # Caddy terminates TLS on :8443; HAProxy routes the public hostname over
+      # ordinary TCP 443, so client networks do not need a nonstandard port.
+      LIVEKIT_WS_URL: wss://${CALL_HOST}
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:7890/health"]
       interval: 20s
