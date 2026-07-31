@@ -1,10 +1,10 @@
 # Сервер аудиозвонков Такт
 
-Один узел LiveKit с TURN/UDP на `443`, TURN/TLS на `5349` и WebSocket-сигналингом на HTTPS `8443`. Встроенный token-service проверяет комнатный ключ через Supabase и выдаёт только короткоживущие токены с разрешёнными для типа звонка источниками.
+Один узел LiveKit с TURN/UDP на `443`, TURN/TLS на `5349` и изолированным HTTPS Caddy на `8443`. HAProxy публикует API и WebSocket-сигналинг этого call-домена на обычном HTTPS `443/TCP`, поэтому клиенты не используют нестандартный порт.
 
 Нужны два DNS-имени, направленные A-записями на VPS:
 
-- `call.example.com` — WebSocket/API LiveKit; в `CALL_DOMAIN` укажите `call.example.com:8443`;
+- `call.example.com` — WebSocket/API LiveKit; в `CALL_DOMAIN` укажите `call.example.com:8443`. Клиенты используют `https://call.example.com` и `wss://call.example.com` через HAProxy;
 - `turn.example.com` — TURN/TLS.
 
 `bootstrap-vps.sh` устанавливает Docker Compose, `envsubst` и Certbot, получает сертификаты для обоих имён без email и запускает сервисы. Открытые входящие порты:
