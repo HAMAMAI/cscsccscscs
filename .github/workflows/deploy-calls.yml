@@ -142,6 +142,8 @@ jobs:
           TURN_DOMAIN: ${{ secrets.TURN_DOMAIN }}
         run: |
           set -euo pipefail
+          call_host="${CALL_DOMAIN%%:*}"
           curl --fail --retry 20 --retry-all-errors --retry-delay 3 "https://$CALL_DOMAIN/health" | grep -q '"ok":true'
+          curl --fail --retry 10 --retry-all-errors --retry-delay 3 "https://$call_host/health" | grep -q '"ok":true'
           timeout 15 openssl s_client -connect "$TURN_DOMAIN:5349" -servername "$TURN_DOMAIN" </dev/null 2>/dev/null \
             | openssl x509 -noout -checkend 86400
